@@ -29,6 +29,7 @@ import { EditorIpcClient, type IpcConnectionState } from "./protocol/ipcClient";
 import type {
   BrpRegistrySchema,
   DecodedViewportFrame,
+  EntityPresetKind,
   FrameMetrics,
   SceneTreeNode,
   ViewportCameraMode,
@@ -36,6 +37,7 @@ import type {
   ViewportStatePayload,
   WorldMode,
 } from "./protocol/types";
+import { ConsolePanel } from "./components/ConsolePanel";
 import {
   DEFAULT_LAYOUT_STATE,
   DockLayout,
@@ -43,6 +45,7 @@ import {
   persistLayout,
   type DockLayoutState,
 } from "./components/DockLayout";
+import { OutlinerPanel } from "./components/OutlinerPanel";
 import { Toolbar } from "./components/Toolbar";
 import { ViewportPanel } from "./components/ViewportPanel";
 
@@ -466,6 +469,118 @@ export function App() {
     setViewportState((prev) => ({ ...prev, viewport_mode: nextMode }));
   }, [ipcClient, viewportState.viewport_mode]);
 
+  const handleSelectEntities = useCallback(
+    (guids: string[]) => {
+      setSelection(guids);
+      ipcClient?.selectEntities(guids);
+    },
+    [ipcClient],
+  );
+
+  const handleToggleVisibility = useCallback(
+    async (node: SceneTreeNode) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.insertComponents(node.entity_bits, {
+          "bevy_camera::visibility::Visibility": node.visible
+            ? "Hidden"
+            : "Inherited",
+        });
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
+  const handleSpawnPreset = useCallback(
+    async (preset: EntityPresetKind, parentGuid: string | null) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        const res = await brpClient.spawnPreset({
+          preset,
+          parent_guid: parentGuid,
+        });
+        setSelection([res.guid]);
+        ipcClient?.selectEntities([res.guid]);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, ipcClient],
+  );
+
+  const handleRenameEntity = useCallback(
+    async (node: SceneTreeNode, newName: string) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.insertComponents(node.entity_bits, {
+          "bevy_ecs::name::Name": newName,
+        });
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
+  const handleDeleteEntity = useCallback(
+    async (node: SceneTreeNode) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.despawnEntity(node.entity_bits);
+        const nextSelection = selection.filter((g) => g !== node.guid);
+        setSelection(nextSelection);
+        ipcClient?.selectEntities(nextSelection);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, ipcClient, selection],
+  );
+
+  const handleReparentEntity = useCallback(
+    async (entityBits: number, parentBits: number | null) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.reparentEntities([entityBits], parentBits);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
   const handleRestartHost = useCallback(async () => {
     setBusy(true);
     setBannerError(null);
@@ -537,28 +652,22 @@ export function App() {
         layout={layout}
         onChange={updateLayout}
         left={
-          <div className="panel">
-            <div className="panel-header">
-              <span>World Outliner</span>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => updateLayout({ ...layout, leftCollapsed: true })}
-              >
-                ×
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className="muted">
-                {hierarchy.length} root node(s) loaded
-              </div>
-              {hierarchy.map((node) => (
-                <div key={node.guid} className="tree-preview-row">
-                  {node.name} ({node.children.length})
-                </div>
-              ))}
-            </div>
-          </div>
+          <OutlinerPanel
+            roots={hierarchy}
+            selectedGuids={selection}
+            connected={ipcState === "connected" || brpClient !== null}
+            onSelect={handleSelectEntities}
+            onToggleVisibility={(node) => void handleToggleVisibility(node)}
+            onSpawnPreset={(preset, parentGuid) =>
+              void handleSpawnPreset(preset, parentGuid)
+            }
+            onRename={(node, newName) => void handleRenameEntity(node, newName)}
+            onDelete={(node) => void handleDeleteEntity(node)}
+            onReparent={(entityBits, parentBits) =>
+              void handleReparentEntity(entityBits, parentBits)
+            }
+            onCollapse={() => updateLayout({ ...layout, leftCollapsed: true })}
+          />
         }
         center={
           <ViewportPanel
@@ -574,41 +683,14 @@ export function App() {
           />
         }
         bottom={
-          <div className="panel">
-            <div className="panel-header">
-              <span>Console ({logs.length})</span>
-              <div className="panel-actions">
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={() => {
-                    setLogs([]);
-                    void clearEngineLogs();
-                  }}
-                >
-                  Clear
-                </button>
-                <button
-                  type="button"
-                  className="ghost-btn"
-                  onClick={() =>
-                    updateLayout({ ...layout, bottomCollapsed: true })
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            <div className="panel-body log-list">
-              {logs.map((entry, idx) => (
-                <div key={`${entry.timestamp_ms}-${idx}`} className="log-row">
-                  <span className={`log-level ${entry.level}`}>{entry.level}</span>
-                  <span className="muted">{entry.target}</span>
-                  <span>{entry.message}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <ConsolePanel
+            logs={logs}
+            onClear={() => {
+              setLogs([]);
+              void clearEngineLogs();
+            }}
+            onCollapse={() => updateLayout({ ...layout, bottomCollapsed: true })}
+          />
         }
         right={
           <div className="panel">

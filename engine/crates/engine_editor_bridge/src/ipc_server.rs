@@ -322,10 +322,15 @@ pub(crate) fn detect_scene_hierarchy_changes(
     mut dirty: ResMut<BridgeDirtyFlags>,
     mutated: Query<(), (With<SceneEntity>, HierarchyMutationFilter)>,
     mut removed_scene_entities: RemovedComponents<SceneEntity>,
+    mut removed_child_of: RemovedComponents<ChildOf>,
 ) {
     let mut changed = !mutated.is_empty();
     if removed_scene_entities.read().next().is_some() {
         removed_scene_entities.clear();
+        changed = true;
+    }
+    if removed_child_of.read().next().is_some() {
+        removed_child_of.clear();
         changed = true;
     }
     if changed {
