@@ -3,6 +3,8 @@
 //! Supports running a project manifest in headless simulation mode, standalone windowed
 //! mode, or as an Editor Host process.
 
+pub mod bootstrap_preview;
+
 use std::{path::PathBuf, time::Duration};
 
 use bevy::{
@@ -14,6 +16,7 @@ use bevy::{
     state::app::StatesPlugin,
     window::{PresentMode, WindowPlugin, WindowResolution},
 };
+use bootstrap_preview::BootstrapPreviewPlugin;
 use clap::{Parser, ValueEnum};
 use engine_core::{EngineCorePlugin, ProjectManifest, WorldMode};
 
@@ -56,6 +59,10 @@ pub struct RuntimeCli {
     /// Optional override for the window title in windowed or editor mode.
     #[arg(long)]
     pub title: Option<String>,
+
+    /// Optional override for the project's default dimensional mode (`2d`, `3d`, or `hybrid`).
+    #[arg(long, value_name = "2d|3d|hybrid")]
+    pub world_mode: Option<WorldMode>,
 }
 
 impl RuntimeCli {
@@ -108,7 +115,7 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
     };
 
     let mode = cli.effective_mode();
-    let world_mode = manifest.project.default_mode;
+    let world_mode = cli.world_mode.unwrap_or(manifest.project.default_mode);
     let asset_file_path = match &paths {
         Some(project_paths) => {
             let resolved = std::fs::canonicalize(&project_paths.assets_dir)
@@ -191,8 +198,14 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
 
             app.add_plugins(EngineCorePlugin);
 
-            if mode == RuntimeMode::Editor {
-                app.add_systems(Startup, log_editor_host_boot);
+            match mode {
+                RuntimeMode::Window => {
+                    app.add_plugins(BootstrapPreviewPlugin);
+                }
+                RuntimeMode::Editor => {
+                    app.add_systems(Startup, log_editor_host_boot);
+                }
+                RuntimeMode::Headless => {}
             }
         }
     }

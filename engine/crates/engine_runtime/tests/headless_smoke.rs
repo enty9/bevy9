@@ -37,11 +37,19 @@ fn cli_parses_headless_and_editor_flags() {
     assert_eq!(cli.max_frames, Some(5));
     assert_eq!(cli.project, Some(PathBuf::from("samples/empty_project")));
 
-    let editor_cli =
-        RuntimeCli::try_parse_from(["engine_runtime", "--mode", "editor", "--title", "Test Host"])
-            .expect("editor CLI args should parse");
+    let editor_cli = RuntimeCli::try_parse_from([
+        "engine_runtime",
+        "--mode",
+        "editor",
+        "--title",
+        "Test Host",
+        "--world-mode",
+        "2d",
+    ])
+    .expect("editor CLI args should parse");
     assert_eq!(editor_cli.effective_mode(), RuntimeMode::Editor);
     assert_eq!(editor_cli.title.as_deref(), Some("Test Host"));
+    assert_eq!(editor_cli.world_mode, Some(WorldMode::Mode2D));
 }
 
 #[test]
@@ -53,6 +61,7 @@ fn headless_empty_project_runs_and_exits() {
         headless: true,
         max_frames: Some(5),
         title: None,
+        world_mode: None,
     };
 
     let mut app = build_app_with_options(
