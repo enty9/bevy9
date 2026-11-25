@@ -32,6 +32,7 @@ import type {
   FrameMetrics,
   SceneTreeNode,
   ViewportCameraMode,
+  ViewportInputEvent,
   ViewportStatePayload,
   WorldMode,
 } from "./protocol/types";
@@ -43,6 +44,7 @@ import {
   type DockLayoutState,
 } from "./components/DockLayout";
 import { Toolbar } from "./components/Toolbar";
+import { ViewportPanel } from "./components/ViewportPanel";
 
 const DEFAULT_METRICS: FrameMetrics = {
   fps: 0,
@@ -450,6 +452,20 @@ export function App() {
     [ipcClient],
   );
 
+  const handleViewportInput = useCallback(
+    (event: ViewportInputEvent) => {
+      ipcClient?.sendViewportInput(event);
+    },
+    [ipcClient],
+  );
+
+  const handleToggleViewportMode = useCallback(() => {
+    const nextMode =
+      viewportState.viewport_mode === "offscreen" ? "native_window" : "offscreen";
+    ipcClient?.setViewportMode(nextMode);
+    setViewportState((prev) => ({ ...prev, viewport_mode: nextMode }));
+  }, [ipcClient, viewportState.viewport_mode]);
+
   const handleRestartHost = useCallback(async () => {
     setBusy(true);
     setBannerError(null);
@@ -545,23 +561,17 @@ export function App() {
           </div>
         }
         center={
-          <div className="panel">
-            <div className="panel-header">
-              <span>
-                Viewport · {viewportState.camera_mode.toUpperCase()} ·{" "}
-                {viewportState.viewport_mode}
-              </span>
-              <span className="muted">
-                {viewportState.width}×{viewportState.height} (Canvas in Task 2.3)
-              </span>
-            </div>
-            <div className="panel-body center-empty">
-              <div className="muted">
-                IPC: {ipcState} · Subscribers: {frameListenersRef.current.size} ·
-                Subscribed helper ready ({typeof subscribeFrames})
-              </div>
-            </div>
-          </div>
+          <ViewportPanel
+            sceneName={sceneName}
+            viewportMode={viewportState.viewport_mode}
+            cameraMode={viewportState.camera_mode}
+            width={viewportState.width}
+            height={viewportState.height}
+            ipcState={ipcState}
+            subscribeFrames={subscribeFrames}
+            onViewportInput={handleViewportInput}
+            onToggleViewportMode={handleToggleViewportMode}
+          />
         }
         bottom={
           <div className="panel">
