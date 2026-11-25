@@ -1,0 +1,17 @@
+[package]
+name = "engine_protocol"
+description = "Shared IPC, BRP, viewport input, and binary frame wire types between editor and runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+engine_core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

@@ -2628,6 +2628,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_protocol"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "engine_runtime"
 version = "0.1.0"
 dependencies = [

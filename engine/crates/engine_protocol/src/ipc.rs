@@ -1,0 +1,167 @@
+//! WebSocket IPC message contracts for real-time editor <-> runtime communication.
+
+use engine_core::{EntityGuid, WorldMode};
+use serde::{Deserialize, Serialize};
+
+use crate::viewport::{ViewportCameraMode, ViewportInputEvent, ViewportMode};
+
+/// Severity levels for runtime log messages forwarded to the editor Console.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevel {
+    /// Fine-grained diagnostic output.
+    Trace,
+    /// Developer debugging message.
+    Debug,
+    /// Informational lifecycle message.
+    Info,
+    /// Non-fatal warning.
+    Warn,
+    /// Error condition.
+    Error,
+}
+
+/// Structured log entry streamed over IPC to the editor Console panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorLogEntry {
+    /// Log severity.
+    pub level: LogLevel,
+    /// Log source target/module path.
+    pub target: String,
+    /// Formatted log message text.
+    pub message: String,
+}
+
+/// Periodic runtime performance telemetry published to the editor UI.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct FrameMetrics {
+    /// Smoothed frames per second.
+    pub fps: f32,
+    /// Last frame delta time in milliseconds.
+    pub frame_time_ms: f32,
+    /// Total ECS entities in the main world.
+    pub entity_count: usize,
+    /// Number of entities belonging to the active scene.
+    pub scene_entity_count: usize,
+}
+
+/// Hierarchical representation of a scene entity for the editor World Outliner.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneTreeNode {
+    /// Persistent [`EntityGuid`] assigned to the entity.
+    pub guid: EntityGuid,
+    /// Ephemeral ECS [`bevy_ecs::entity::Entity::to_bits`] value for direct BRP calls.
+    pub entity_bits: u64,
+    /// Display name from Bevy `Name` component (or fallback label).
+    pub name: String,
+    /// Parent entity's [`EntityGuid`], if the entity is a child.
+    pub parent_guid: Option<EntityGuid>,
+    /// Whether the entity is marked visible.
+    pub visible: bool,
+    /// Ordered child entity nodes.
+    pub children: Vec<SceneTreeNode>,
+    /// Fully-qualified reflected component type paths attached to this entity.
+    pub components: Vec<String>,
+}
+
+/// Messages sent from the editor UI/Tauri client to the Engine Host over WebSocket.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ClientIpcMessage {
+    /// Initial handshake sent after opening the WebSocket connection.
+    Hello {
+        /// Protocol version supported by the client.
+        protocol_version: u32,
+        /// Human-readable client label (e.g. `"editor-ui"`).
+        client_name: String,
+    },
+    /// Forwards an input or resize event from the embedded `<canvas>`.
+    ViewportInput {
+        /// Encoded input/resize event.
+        event: ViewportInputEvent,
+    },
+    /// Requests switching between [`ViewportMode::Offscreen`] and [`ViewportMode::NativeWindow`].
+    SetViewportMode {
+        /// Desired presentation mode.
+        mode: ViewportMode,
+    },
+    /// Requests switching the editor camera between [`ViewportCameraMode::Mode3D`] and [`ViewportCameraMode::Mode2D`].
+    SetCameraMode {
+        /// Desired camera navigation mode.
+        camera_mode: ViewportCameraMode,
+    },
+    /// Updates the current editor selection by persistent entity GUIDs.
+    SelectEntities {
+        /// Selected entity GUIDs.
+        guids: Vec<EntityGuid>,
+    },
+    /// Heartbeat ping with caller-supplied nonce.
+    Ping {
+        /// Timestamp or sequence token echoed back in [`ServerIpcMessage::Pong`].
+        nonce: u64,
+    },
+}
+
+/// Messages pushed from the Engine Host to connected WebSocket clients.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ServerIpcMessage {
+    /// Handshake acknowledgment sent in response to [`ClientIpcMessage::Hello`].
+    Welcome {
+        /// Protocol version spoken by the runtime.
+        protocol_version: u32,
+        /// Active project name.
+        project_name: String,
+        /// Active project dimensional mode.
+        world_mode: WorldMode,
+        /// Currently loaded scene display name.
+        scene_name: String,
+        /// Current scene file path, if saved/loaded from disk.
+        scene_path: Option<String>,
+        /// Active viewport presentation mode.
+        viewport_mode: ViewportMode,
+        /// Active viewport camera mode.
+        camera_mode: ViewportCameraMode,
+    },
+    /// Full hierarchy tree snapshot of the current scene.
+    HierarchySnapshot {
+        /// Root nodes of the scene tree.
+        roots: Vec<SceneTreeNode>,
+    },
+    /// Notification that editor selection changed.
+    SelectionChanged {
+        /// Currently selected entity GUIDs.
+        guids: Vec<EntityGuid>,
+    },
+    /// Notification that viewport transport or camera state changed.
+    ViewportStateChanged {
+        /// Current viewport presentation mode.
+        viewport_mode: ViewportMode,
+        /// Current viewport camera mode.
+        camera_mode: ViewportCameraMode,
+        /// Current render width in pixels.
+        width: u32,
+        /// Current render height in pixels.
+        height: u32,
+    },
+    /// Log entry emitted by the runtime.
+    Log {
+        /// Structured log entry.
+        entry: EditorLogEntry,
+    },
+    /// Periodic performance metrics snapshot.
+    Metrics {
+        /// Latest frame and entity metrics.
+        metrics: FrameMetrics,
+    },
+    /// Heartbeat reply matching [`ClientIpcMessage::Ping`].
+    Pong {
+        /// Echoed nonce token.
+        nonce: u64,
+    },
+    /// Error notification for a malformed or failed client IPC message.
+    Error {
+        /// Human-readable error explanation.
+        message: String,
+    },
+}
