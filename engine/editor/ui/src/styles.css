@@ -703,3 +703,279 @@ button.ghost-btn:hover:not(:disabled) {
 .log-row {
   grid-template-columns: 64px 52px 150px 1fr;
 }
+
+/* Inspector styles */
+.inspector-body {
+  gap: 8px;
+}
+
+.inspector-entity-card {
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.inspector-entity-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.inspector-meta {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.inspector-actions-bar {
+  display: flex;
+}
+
+.add-component-popover {
+  width: 100%;
+  left: 0;
+  right: 0;
+}
+
+.add-component-list {
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.add-component-list .preset-btn {
+  justify-content: space-between;
+}
+
+.component-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.015);
+  overflow: hidden;
+}
+
+.component-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.component-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.component-card-body {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.prop-row {
+  display: grid;
+  grid-template-columns: 105px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.prop-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prop-control {
+  width: 100%;
+  min-width: 0;
+}
+
+.num-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 12px;
+  outline: none;
+}
+
+.num-input:focus {
+  border-color: var(--accent-blue);
+}
+
+.vec-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.vec-cell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.vec-cell .num-input {
+  border: none;
+  border-radius: 0;
+  padding: 3px 4px;
+}
+
+.vec-tag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+}
+
+.vec-tag.axis-x {
+  color: #ef6b6b;
+}
+
+.vec-tag.axis-y {
+  color: #5fd37a;
+}
+
+.vec-tag.axis-z {
+  color: #58a9f7;
+}
+
+.vec-tag.axis-w {
+  color: #f2a93b;
+}
+
+.transform-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transform-row {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  align-items: center;
+  gap: 6px;
+}
+
+.transform-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.color-editor-block {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.color-swatch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.color-picker {
+  width: 34px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.rgba-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.rgba-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scalar-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.unit-slider {
+  flex: 1;
+  min-width: 60px;
+  accent-color: var(--accent-blue);
+}
+
+.option-block,
+.enum-complex-block,
+.struct-fields,
+.nested-struct {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nested-struct-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.nested-indent {
+  padding-left: 10px;
+  border-left: 2px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.option-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.json-preview {
+  margin: 0;
+  padding: 6px;
+  border-radius: 4px;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  font-size: 11px;
+  overflow: auto;
+  max-height: 140px;
+}

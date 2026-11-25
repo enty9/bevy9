@@ -45,6 +45,7 @@ import {
   persistLayout,
   type DockLayoutState,
 } from "./components/DockLayout";
+import { InspectorPanel } from "./components/InspectorPanel";
 import { OutlinerPanel } from "./components/OutlinerPanel";
 import { Toolbar } from "./components/Toolbar";
 import { ViewportPanel } from "./components/ViewportPanel";
@@ -62,6 +63,22 @@ const DEFAULT_VIEWPORT_STATE: ViewportStatePayload = {
   width: 1280,
   height: 720,
 };
+
+function findNodeByGuid(
+  nodes: SceneTreeNode[],
+  guid: string,
+): SceneTreeNode | null {
+  for (const node of nodes) {
+    if (node.guid === guid) {
+      return node;
+    }
+    const found = findNodeByGuid(node.children, guid);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
+}
 
 export type FrameSubscriber = (frame: DecodedViewportFrame) => void;
 
@@ -607,7 +624,26 @@ export function App() {
     };
   }, [handleSaveScene]);
 
-  const schemaCount = registrySchema ? Object.keys(registrySchema).length : 0;
+  const selectedNode = useMemo(
+    () =>
+      selection.length > 0 ? findNodeByGuid(hierarchy, selection[0]) : null,
+    [hierarchy, selection],
+  );
+
+  const handleComponentChanged = useCallback(
+    async (refreshTree: boolean) => {
+      setSceneDirty(true);
+      if (refreshTree && brpClient) {
+        try {
+          const tree = await brpClient.getWorldTree();
+          setHierarchy(tree.roots);
+        } catch {
+          // Hierarchy snapshot over WS will sync on next tick.
+        }
+      }
+    },
+    [brpClient],
+  );
 
   return (
     <div className="editor-shell">
@@ -693,22 +729,17 @@ export function App() {
           />
         }
         right={
-          <div className="panel">
-            <div className="panel-header">
-              <span>Inspector</span>
-              <button
-                type="button"
-                className="ghost-btn"
-                onClick={() => updateLayout({ ...layout, rightCollapsed: true })}
-              >
-                ×
-              </button>
-            </div>
-            <div className="panel-body">
-              <div className="muted">Selected: {selection.length}</div>
-              <div className="muted">Reflected schema types: {schemaCount}</div>
-            </div>
-          </div>
+          <InspectorPanel
+            selectedNode={selectedNode}
+            selectedCount={selection.length}
+            brpClient={brpClient}
+            registrySchema={registrySchema}
+            onComponentChanged={(refreshTree) =>
+              void handleComponentChanged(refreshTree)
+            }
+            onDeleteEntity={(node) => void handleDeleteEntity(node)}
+            onCollapse={() => updateLayout({ ...layout, rightCollapsed: true })}
+          />
         }
       />
     </div>
