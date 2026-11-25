@@ -1,0 +1,245 @@
+export const PROTOCOL_VERSION = 1;
+export const FRAME_MAGIC = "BV9F";
+export const FRAME_HEADER_BYTES = 28;
+
+export type WorldMode = "2d" | "3d" | "hybrid";
+export type ViewportMode = "offscreen" | "native_window";
+export type ViewportCameraMode = "3d" | "2d";
+
+export type EntityPresetKind =
+  | "empty"
+  | "cube3d"
+  | "sphere3d"
+  | "plane3d"
+  | "directional_light"
+  | "point_light"
+  | "camera3d"
+  | "sprite2d"
+  | "quad2d"
+  | "circle2d"
+  | "camera2d";
+
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+export interface EditorLogEntry {
+  level: LogLevel;
+  target: string;
+  message: string;
+}
+
+export interface FrameMetrics {
+  fps: number;
+  frame_time_ms: number;
+  entity_count: number;
+  scene_entity_count: number;
+}
+
+export interface SceneTreeNode {
+  guid: string;
+  entity_bits: number;
+  name: string;
+  parent_guid: string | null;
+  visible: boolean;
+  children: SceneTreeNode[];
+  components: string[];
+}
+
+export type PointerButtonCode = "left" | "right" | "middle";
+
+export interface InputModifiers {
+  shift: boolean;
+  ctrl: boolean;
+  alt: boolean;
+  meta: boolean;
+}
+
+export type ViewportInputEvent =
+  | {
+      kind: "pointer_move";
+      x: number;
+      y: number;
+      delta_x: number;
+      delta_y: number;
+    }
+  | {
+      kind: "pointer_button";
+      button: PointerButtonCode;
+      pressed: boolean;
+      x: number;
+      y: number;
+      modifiers: InputModifiers;
+    }
+  | {
+      kind: "wheel";
+      delta_x: number;
+      delta_y: number;
+      modifiers: InputModifiers;
+    }
+  | {
+      kind: "key";
+      code: string;
+      pressed: boolean;
+      modifiers: InputModifiers;
+    }
+  | {
+      kind: "resize";
+      width: number;
+      height: number;
+      scale_factor: number;
+    }
+  | {
+      kind: "focus_changed";
+      focused: boolean;
+    };
+
+export type ClientIpcMessage =
+  | {
+      type: "hello";
+      protocol_version: number;
+      client_name: string;
+    }
+  | {
+      type: "viewport_input";
+      event: ViewportInputEvent;
+    }
+  | {
+      type: "set_viewport_mode";
+      mode: ViewportMode;
+    }
+  | {
+      type: "set_camera_mode";
+      camera_mode: ViewportCameraMode;
+    }
+  | {
+      type: "select_entities";
+      guids: string[];
+    }
+  | {
+      type: "ping";
+      nonce: number;
+    };
+
+export interface WelcomePayload {
+  protocol_version: number;
+  project_name: string;
+  world_mode: WorldMode;
+  scene_name: string;
+  scene_path: string | null;
+  viewport_mode: ViewportMode;
+  camera_mode: ViewportCameraMode;
+}
+
+export interface ViewportStatePayload {
+  viewport_mode: ViewportMode;
+  camera_mode: ViewportCameraMode;
+  width: number;
+  height: number;
+}
+
+export type ServerIpcMessage =
+  | ({ type: "welcome" } & WelcomePayload)
+  | { type: "hierarchy_snapshot"; roots: SceneTreeNode[] }
+  | { type: "selection_changed"; guids: string[] }
+  | ({ type: "viewport_state_changed" } & ViewportStatePayload)
+  | { type: "log"; entry: EditorLogEntry }
+  | { type: "metrics"; metrics: FrameMetrics }
+  | { type: "pong"; nonce: number }
+  | { type: "error"; message: string };
+
+export interface ViewportFrameHeader {
+  protocol_version: number;
+  frame_id: number;
+  width: number;
+  height: number;
+  format: number;
+  payload_len: number;
+}
+
+export interface DecodedViewportFrame {
+  header: ViewportFrameHeader;
+  pixels: Uint8ClampedArray<ArrayBuffer>;
+}
+
+export interface SceneNewParams {
+  name: string;
+  world_mode: WorldMode;
+}
+
+export interface SceneLoadParams {
+  path: string;
+}
+
+export interface SceneSaveParams {
+  path?: string | null;
+  name?: string | null;
+}
+
+export interface SceneOperationResult {
+  name: string;
+  path: string | null;
+  world_mode: WorldMode;
+  entity_count: number;
+}
+
+export interface WorldTreeResult {
+  scene_name: string;
+  scene_path: string | null;
+  world_mode: WorldMode;
+  roots: SceneTreeNode[];
+}
+
+export interface SpawnPresetParams {
+  preset: EntityPresetKind;
+  name?: string | null;
+  parent_guid?: string | null;
+  position?: [number, number, number] | null;
+}
+
+export interface SpawnPresetResult {
+  guid: string;
+  entity_bits: number;
+  name: string;
+}
+
+export interface SetViewportModeResult {
+  mode: ViewportMode;
+}
+
+export interface BrpSchemaRef {
+  type?: {
+    $ref?: string;
+  };
+  $ref?: string;
+}
+
+export interface BrpSchemaComponentInfo {
+  mutable?: boolean;
+  storageType?: string;
+  isSendAndSync?: boolean;
+  requiredComponentTypes?: string[];
+  relationshipKind?: string;
+}
+
+export interface BrpSchemaType {
+  type?: string | string[];
+  kind?: string;
+  shortPath?: string;
+  typePath?: string;
+  crateName?: string;
+  modulePath?: string;
+  reflectTypes?: string[];
+  componentInfo?: BrpSchemaComponentInfo;
+  properties?: Record<string, BrpSchemaRef>;
+  required?: string[];
+  prefixItems?: BrpSchemaRef[];
+  items?: BrpSchemaRef | boolean;
+  oneOf?: Array<string | BrpSchemaType>;
+  additionalProperties?: boolean | BrpSchemaRef;
+}
+
+export type BrpRegistrySchema = Record<string, BrpSchemaType>;
+
+export interface BrpGetComponentsResponse {
+  components: Record<string, unknown>;
+  errors?: Record<string, { code: number; message: string }>;
+}

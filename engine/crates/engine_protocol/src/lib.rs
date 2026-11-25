@@ -217,5 +217,14 @@ mod tests {
         let tree_back: WorldTreeResult =
             serde_json::from_str(&tree_json).expect("tree result should deserialize");
         assert_eq!(tree_back, tree_res);
+
+        assert_eq!(
+            serde_json::to_string(&ViewportCameraMode::Mode3D).unwrap(),
+            "\"3d\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ViewportCameraMode::Mode2D).unwrap(),
+            "\"2d\""
+        );
     }
 }

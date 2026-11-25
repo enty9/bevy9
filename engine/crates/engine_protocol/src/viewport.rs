@@ -24,12 +24,13 @@ pub enum ViewportMode {
 
 /// Active camera navigation mode in the editor viewport.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ViewportCameraMode {
     /// Perspective 3D orbit/fly camera.
     #[default]
+    #[serde(rename = "3d")]
     Mode3D,
     /// Orthographic 2D pan/zoom camera.
+    #[serde(rename = "2d")]
     Mode2D,
 }
 
