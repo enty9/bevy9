@@ -321,6 +321,14 @@ fn brp_custom_methods_and_ws_ipc_roundtrip() {
         app.world().resource::<ViewportConfig>().mode,
         ViewportMode::NativeWindow
     );
+    app.update();
+    assert!(
+        app.world()
+            .resource::<engine_render::OffscreenRenderState>()
+            .detached_window
+            .is_some(),
+        "detached window entity must be spawned in NativeWindow mode"
+    );
 
     // Switch back to Offscreen before WebSocket tests.
     let (_, _): (String, SetViewportModeResult) = call_brp_while_pumping(
@@ -333,6 +341,14 @@ fn brp_custom_methods_and_ws_ipc_roundtrip() {
             })
             .unwrap(),
         ),
+    );
+    app.update();
+    assert!(
+        app.world()
+            .resource::<engine_render::OffscreenRenderState>()
+            .detached_window
+            .is_none(),
+        "detached window entity must be despawned when returning to Offscreen mode"
     );
 
     // 5. Verify `engine.scene.save` -> `engine.scene.new` -> `engine.scene.load`.

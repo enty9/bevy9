@@ -10,8 +10,8 @@ pub mod prelude {
         camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
         viewport::{
             align_bytes_per_row, clamp_viewport_dimensions, create_offscreen_target_image,
-            unpack_aligned_rgba8, OffscreenRenderState, ViewportConfig, ViewportFrameChannel,
-            ViewportFramePacket, ViewportInputQueue,
+            unpack_aligned_rgba8, DetachedViewportWindow, OffscreenRenderState, ViewportConfig,
+            ViewportFrameChannel, ViewportFramePacket, ViewportInputQueue,
         },
         EngineRenderPlugin,
     };
@@ -75,7 +75,7 @@ mod tests {
     use bevy_image::Image;
     use bevy_input::mouse::{MouseMotion, MouseWheel};
     use bevy_time::TimePlugin;
-    use bevy_window::{WindowCloseRequested, WindowRef};
+    use bevy_window::{Window, WindowCloseRequested, WindowRef};
     use engine_core::EngineCorePlugin;
     use engine_protocol::{ViewportInputEvent, ViewportMode};
 
@@ -109,11 +109,13 @@ mod tests {
             cam_state.distance = 12.0;
         }
 
-        // Offscreen mode should allocate target image & attach RenderTarget::Image.
+        // Offscreen mode should allocate target image, keep no detached OS window,
+        // and attach RenderTarget::Image.
         {
             let state = app.world().resource::<OffscreenRenderState>();
             assert!(state.image_handle.is_some());
             assert!(state.readback_entity.is_some());
+            assert!(state.detached_window.is_none());
             assert_eq!(state.allocated_size, bevy_math::UVec2::new(1280, 720));
         }
         {
@@ -123,26 +125,62 @@ mod tests {
             assert!(matches!(target, RenderTarget::Image(_)));
         }
 
-        // Switch to NativeWindow: Readback despawned, RenderTarget becomes primary Window, camera state preserved.
+        // Switch to NativeWindow: Readback despawned, detached window spawned, RenderTarget points to detached window.
         app.world_mut().resource_mut::<ViewportConfig>().mode = ViewportMode::NativeWindow;
         app.update();
 
-        {
+        let win_entity = {
             let state = app.world().resource::<OffscreenRenderState>();
             assert!(state.readback_entity.is_none());
+            let win_entity = state
+                .detached_window
+                .expect("detached viewport window must be spawned");
             let cam_state = app.world().resource::<EditorCameraState>();
             assert_eq!(cam_state.focus, bevy_math::Vec3::new(3.0, 2.0, -1.0));
             assert_eq!(cam_state.distance, 12.0);
+            win_entity
+        };
+        {
+            let world = app.world();
+            let window = world
+                .get::<Window>(win_entity)
+                .expect("detached window entity must have Window component");
+            assert!(window.visible);
+            assert!(!window.focused);
+            assert!(world.get::<DetachedViewportWindow>(win_entity).is_some());
         }
         {
             let world = app.world_mut();
             let mut q = world.query::<(&RenderTarget, &EditorCamera3d)>();
             let (target, _) = q.single(world).expect("EditorCamera3d present");
-            assert!(matches!(target, RenderTarget::Window(WindowRef::Primary)));
+            assert!(matches!(
+                target,
+                RenderTarget::Window(WindowRef::Entity(id)) if *id == win_entity
+            ));
         }
 
-        // Resize event while switching back to Offscreen reallocates target cleanly.
-        app.world_mut().resource_mut::<ViewportConfig>().mode = ViewportMode::Offscreen;
+        // Emitting WindowCloseRequested on the detached window switches back to Offscreen,
+        // despawns the window entity, and restores RenderTarget::Image.
+        app.world_mut()
+            .write_message(WindowCloseRequested { window: win_entity });
+        app.update();
+
+        {
+            let config = app.world().resource::<ViewportConfig>();
+            assert_eq!(config.mode, ViewportMode::Offscreen);
+            let state = app.world().resource::<OffscreenRenderState>();
+            assert!(state.detached_window.is_none());
+            assert!(state.readback_entity.is_some());
+            assert!(app.world().get_entity(win_entity).is_err());
+        }
+        {
+            let world = app.world_mut();
+            let mut q = world.query::<(&RenderTarget, &EditorCamera3d)>();
+            let (target, _) = q.single(world).expect("EditorCamera3d present");
+            assert!(matches!(target, RenderTarget::Image(_)));
+        }
+
+        // Resize event in Offscreen reallocates target cleanly.
         app.world_mut()
             .resource_mut::<ViewportInputQueue>()
             .push(ViewportInputEvent::Resize {

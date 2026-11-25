@@ -15,6 +15,7 @@ use bevy::{
     prelude::*,
     state::app::StatesPlugin,
     window::{ExitCondition, PresentMode, WindowPlugin, WindowResolution},
+    winit::{UpdateMode, WinitSettings},
 };
 use bootstrap_preview::BootstrapPreviewPlugin;
 use clap::{Parser, ValueEnum};
@@ -22,7 +23,8 @@ use engine_core::{EngineCorePlugin, ProjectManifest, ProjectPaths, WorldMode};
 use engine_editor_bridge::{
     EditorBridgeConfig, EditorBridgePlugin, EditorIpcServer, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT,
 };
-use engine_render::EngineRenderPlugin;
+use engine_protocol::ViewportCameraMode;
+use engine_render::{EngineRenderPlugin, ViewportConfig};
 use engine_scene::{load_level_from_file, EngineScenePlugin, SceneCameraActivationPolicy};
 
 /// Execution mode for `engine_runtime`.
@@ -184,35 +186,38 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
             ));
         }
         RuntimeMode::Window | RuntimeMode::Editor => {
-            let is_editor = mode == RuntimeMode::Editor;
-            let window_title = cli
-                .title
-                .as_deref()
-                .unwrap_or(&manifest.window.title)
-                .to_owned();
-            let present_mode = if manifest.window.vsync {
-                PresentMode::AutoVsync
-            } else {
-                PresentMode::AutoNoVsync
-            };
-
-            let primary_window = Window {
-                title: window_title,
-                resolution: WindowResolution::new(manifest.window.width, manifest.window.height),
-                resizable: manifest.window.resizable,
-                present_mode,
-                visible: !is_editor,
-                ..Default::default()
-            };
-
-            let window_plugin = if is_editor {
+            let window_plugin = if mode == RuntimeMode::Editor {
+                // Start windowless in Offscreen mode so Wayland/X11 never maps a blank window;
+                // detached native windows are spawned dynamically on `ViewportMode::NativeWindow`.
                 WindowPlugin {
-                    primary_window: Some(primary_window),
+                    primary_window: None,
                     exit_condition: ExitCondition::DontExit,
                     close_when_requested: false,
                     ..Default::default()
                 }
             } else {
+                let window_title = cli
+                    .title
+                    .as_deref()
+                    .unwrap_or(&manifest.window.title)
+                    .to_owned();
+                let present_mode = if manifest.window.vsync {
+                    PresentMode::AutoVsync
+                } else {
+                    PresentMode::AutoNoVsync
+                };
+
+                let primary_window = Window {
+                    title: window_title,
+                    resolution: WindowResolution::new(
+                        manifest.window.width,
+                        manifest.window.height,
+                    ),
+                    resizable: manifest.window.resizable,
+                    present_mode,
+                    ..Default::default()
+                };
+
                 WindowPlugin {
                     primary_window: Some(primary_window),
                     ..Default::default()
@@ -225,6 +230,16 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
                 app.add_plugins(plugins);
             } else {
                 app.add_plugins(plugins.disable::<LogPlugin>());
+            }
+
+            if mode == RuntimeMode::Editor {
+                // Keep the main loop ticking at 60 Hz when 0 native OS windows exist.
+                app.insert_resource(WinitSettings {
+                    focused_mode: UpdateMode::Continuous,
+                    unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(
+                        1.0 / 60.0,
+                    )),
+                });
             }
 
             app.add_plugins(EngineCorePlugin);
@@ -253,6 +268,23 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
             app.add_plugins(BootstrapPreviewPlugin);
         }
         RuntimeMode::Editor => {
+            let active_world_mode = app.world().resource::<WorldMode>();
+            let initial_camera_mode = match active_world_mode {
+                WorldMode::Mode2D => ViewportCameraMode::Mode2D,
+                WorldMode::Mode3D | WorldMode::Hybrid => ViewportCameraMode::Mode3D,
+            };
+            let viewport_title = cli
+                .title
+                .clone()
+                .unwrap_or_else(|| format!("{} — Bevy9 Viewport", manifest.project.name));
+
+            app.insert_resource(ViewportConfig {
+                camera_mode: initial_camera_mode,
+                width: manifest.window.width,
+                height: manifest.window.height,
+                window_title: viewport_title,
+                ..Default::default()
+            });
             app.insert_resource(EditorBridgeConfig {
                 brp_port: cli.brp_port,
                 ipc_port: cli.ipc_port,
@@ -316,16 +348,17 @@ fn log_editor_host_boot(
     bridge_config: Res<EditorBridgeConfig>,
     ipc_server: Option<Res<EditorIpcServer>>,
 ) {
-    let ipc_addr = ipc_server
+    let brp_url = format!("http://{}:{}", bridge_config.host, bridge_config.brp_port);
+    let ipc_url = ipc_server
         .as_deref()
-        .map(|server| server.bound_addr().to_string())
+        .map(|server| format!("ws://{}", server.bound_addr()))
         .unwrap_or_else(|| "disabled".to_owned());
 
     tracing::info!(
         project = %manifest.project.name,
         world_mode = %*world_mode,
-        brp_port = bridge_config.brp_port,
-        ipc_addr = %ipc_addr,
+        brp_url = %brp_url,
+        ipc_url = %ipc_url,
         "engine_runtime booted in Editor Host mode"
     );
 }

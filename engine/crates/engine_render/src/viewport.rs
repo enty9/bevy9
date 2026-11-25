@@ -1,9 +1,11 @@
 //! Offscreen and native-window viewport transport (`ViewportTransport`).
 
 use bevy_asset::{Assets, Handle};
-use bevy_camera::{ClearColor, RenderTarget};
+use bevy_camera::{ClearColor, Projection, RenderTarget};
 use bevy_color::Color;
 use bevy_ecs::{
+    change_detection::DetectChangesMut,
+    component::Component,
     entity::Entity,
     message::MessageReader,
     observer::On,
@@ -18,7 +20,7 @@ use bevy_render::{
     render_resource::{TextureFormat, TextureUsages},
 };
 use bevy_time::Time;
-use bevy_window::{PrimaryWindow, Window, WindowCloseRequested, WindowRef};
+use bevy_window::{Window, WindowCloseRequested, WindowRef, WindowResolution};
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use engine_protocol::{
     PixelFormat, ViewportCameraMode, ViewportFrameHeader, ViewportInputEvent, ViewportMode,
@@ -90,6 +92,10 @@ pub fn unpack_aligned_rgba8(padded: &[u8], width: u32, height: u32) -> Option<Ve
     Some(packed)
 }
 
+/// Marker component attached to the dynamically spawned detached OS viewport window.
+#[derive(Component, Debug, Default, Clone, Copy)]
+pub struct DetachedViewportWindow;
+
 /// Active configuration for the editor viewport presentation and camera mode.
 #[derive(Resource, Debug, Clone, PartialEq)]
 pub struct ViewportConfig {
@@ -107,6 +113,8 @@ pub struct ViewportConfig {
     pub show_grid: bool,
     /// Background clear color for editor viewports.
     pub clear_color: Color,
+    /// Window title used when spawning the detached [`DetachedViewportWindow`].
+    pub window_title: String,
 }
 
 impl Default for ViewportConfig {
@@ -119,6 +127,7 @@ impl Default for ViewportConfig {
             target_fps: 30,
             show_grid: true,
             clear_color: Color::srgb(0.08, 0.10, 0.14),
+            window_title: "Bevy9 Viewport".to_owned(),
         }
     }
 }
@@ -190,13 +199,15 @@ impl ViewportInputQueue {
     }
 }
 
-/// Internal tracking state for offscreen render target allocation and GPU readback.
+/// Internal tracking state for offscreen render target allocation, readback, and detached window lifecycle.
 #[derive(Resource, Default, Debug)]
 pub struct OffscreenRenderState {
     /// Handle of the offscreen render target image, when allocated.
     pub image_handle: Option<Handle<Image>>,
     /// Entity holding the active [`Readback`] component, when attached.
     pub readback_entity: Option<Entity>,
+    /// Entity of the dynamically spawned detached viewport window in [`ViewportMode::NativeWindow`].
+    pub detached_window: Option<Entity>,
     /// Current allocated image dimensions.
     pub allocated_size: UVec2,
     /// Monotonic frame sequence counter for emitted packets.
@@ -237,31 +248,36 @@ pub(crate) fn sync_viewport_transport(
     mut state: ResMut<OffscreenRenderState>,
     mut images: Option<ResMut<Assets<Image>>>,
     mut close_requests: MessageReader<WindowCloseRequested>,
-    mut primary_windows: Query<&mut Window, With<PrimaryWindow>>,
-    mut editor_cameras: Query<&mut RenderTarget, EditorCameraTargetFilter>,
+    mut editor_cameras: Query<(&mut RenderTarget, &mut Projection), EditorCameraTargetFilter>,
 ) {
     // Closing the detached native viewport window returns it to embedded Offscreen mode
     // instead of exiting the Editor Host.
-    if config.mode == ViewportMode::NativeWindow && close_requests.read().next().is_some() {
-        config.mode = ViewportMode::Offscreen;
+    if config.mode == ViewportMode::NativeWindow {
+        let detached = state.detached_window;
+        let should_attach = close_requests
+            .read()
+            .any(|event| detached.is_none_or(|win| event.window == win));
+        if should_attach {
+            config.mode = ViewportMode::Offscreen;
+        }
     } else {
         close_requests.clear();
     }
 
     commands.insert_resource(ClearColor(config.clear_color));
 
-    for mut window in &mut primary_windows {
-        let should_be_visible = config.mode == ViewportMode::NativeWindow;
-        if window.visible != should_be_visible {
-            window.visible = should_be_visible;
-        }
-    }
-
     let (target_w, target_h) = clamp_viewport_dimensions(config.width, config.height);
     let desired_size = UVec2::new(target_w, target_h);
 
     match config.mode {
         ViewportMode::Offscreen => {
+            if let Some(detached) = state.detached_window.take()
+                && commands.get_entity(detached).is_ok()
+            {
+                commands.entity(detached).despawn();
+                tracing::info!(window = ?detached, "Detached viewport window closed; returning to Offscreen mode");
+            }
+
             if let Some(images) = images.as_deref_mut() {
                 let needs_realloc =
                     state.image_handle.is_none() || state.allocated_size != desired_size;
@@ -295,11 +311,13 @@ pub(crate) fn sync_viewport_transport(
             }
 
             if let Some(handle) = state.image_handle.as_ref() {
-                for mut target in &mut editor_cameras {
+                for (mut target, mut projection) in &mut editor_cameras {
                     let already_matches =
                         matches!(&*target, RenderTarget::Image(img) if img.handle == *handle);
                     if !already_matches {
                         *target = RenderTarget::from(handle.clone());
+                        // Force `camera_system` to recompute `target_info` after RenderTarget change.
+                        projection.set_changed();
                     }
                 }
             }
@@ -311,9 +329,42 @@ pub(crate) fn sync_viewport_transport(
                 commands.entity(old_entity).despawn();
             }
 
-            for mut target in &mut editor_cameras {
-                if !matches!(&*target, RenderTarget::Window(WindowRef::Primary)) {
-                    *target = RenderTarget::Window(WindowRef::Primary);
+            let window_entity = match state.detached_window {
+                Some(existing) if commands.get_entity(existing).is_ok() => existing,
+                _ => {
+                    let spawned = commands
+                        .spawn((
+                            DetachedViewportWindow,
+                            Window {
+                                title: config.window_title.clone(),
+                                resolution: WindowResolution::new(target_w, target_h),
+                                resizable: true,
+                                visible: true,
+                                focused: false,
+                                ..Default::default()
+                            },
+                        ))
+                        .id();
+                    state.detached_window = Some(spawned);
+                    tracing::info!(
+                        window = ?spawned,
+                        width = target_w,
+                        height = target_h,
+                        "Spawned detached native viewport window"
+                    );
+                    spawned
+                }
+            };
+
+            for (mut target, mut projection) in &mut editor_cameras {
+                let already_matches = matches!(
+                    &*target,
+                    RenderTarget::Window(WindowRef::Entity(id)) if *id == window_entity
+                );
+                if !already_matches {
+                    *target = RenderTarget::Window(WindowRef::Entity(window_entity));
+                    // Force `camera_system` to recompute `target_info` after RenderTarget change.
+                    projection.set_changed();
                 }
             }
         }
