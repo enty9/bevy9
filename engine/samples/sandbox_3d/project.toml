@@ -1,0 +1,18 @@
+schema_version = 1
+
+[project]
+name = "Sandbox 3D"
+id = "00000000-0000-4000-8000-000000000002"
+version = "0.1.0"
+default_mode = "3d"
+startup_scene = "scenes/main.level.ron"
+assets_dir = "assets"
+scenes_dir = "scenes"
+scripts_dir = "scripts"
+
+[window]
+title = "Bevy9 Engine — Sandbox 3D"
+width = 1280
+height = 720
+resizable = true
+vsync = true

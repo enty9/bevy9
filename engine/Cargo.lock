@@ -2650,6 +2650,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_scene"
+version = "0.1.0"
+dependencies = [
+ "bevy_app",
+ "bevy_asset",
+ "bevy_camera",
+ "bevy_color",
+ "bevy_ecs",
+ "bevy_light",
+ "bevy_math",
+ "bevy_mesh",
+ "bevy_pbr",
+ "bevy_reflect",
+ "bevy_shape",
+ "bevy_sprite",
+ "bevy_sprite_render",
+ "bevy_transform",
+ "bevy_world_serialization",
+ "engine_core",
+ "engine_protocol",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+ "tracing",
+]
+
+[[package]]
 name = "enumn"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"

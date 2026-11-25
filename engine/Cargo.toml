@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/engine_core",
   "crates/engine_protocol",
+  "crates/engine_scene",
   "crates/engine_runtime",
 ]
 
@@ -27,6 +28,7 @@ semicolon_if_nothing_returned = "warn"
 [workspace.dependencies]
 engine_core = { path = "crates/engine_core" }
 engine_protocol = { path = "crates/engine_protocol" }
+engine_scene = { path = "crates/engine_scene" }
 engine_runtime = { path = "crates/engine_runtime" }
 
 bevy = { path = "..", default-features = false }
@@ -48,6 +50,7 @@ bevy_reflect = { path = "../crates/bevy_reflect", features = ["uuid"] }
 bevy_remote = { path = "../crates/bevy_remote" }
 bevy_render = { path = "../crates/bevy_render" }
 bevy_settings = { path = "../crates/bevy_settings" }
+bevy_shape = { path = "../crates/bevy_shape", features = ["serialize"] }
 bevy_sprite = { path = "../crates/bevy_sprite" }
 bevy_sprite_render = { path = "../crates/bevy_sprite_render" }
 bevy_state = { path = "../crates/bevy_state" }

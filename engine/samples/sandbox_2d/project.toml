@@ -1,0 +1,18 @@
+schema_version = 1
+
+[project]
+name = "Sandbox 2D"
+id = "00000000-0000-4000-8000-000000000003"
+version = "0.1.0"
+default_mode = "2d"
+startup_scene = "scenes/main.level.ron"
+assets_dir = "assets"
+scenes_dir = "scenes"
+scripts_dir = "scripts"
+
+[window]
+title = "Bevy9 Engine — Sandbox 2D"
+width = 1280
+height = 720
+resizable = true
+vsync = true

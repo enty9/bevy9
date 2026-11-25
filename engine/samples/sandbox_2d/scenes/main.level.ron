@@ -1,0 +1,114 @@
+(
+    schema_version: 1,
+    name: "Sandbox 2D",
+    world_mode: "2d",
+    world: (
+        resources: {},
+        entities: {
+            4294967256: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::name::Name": "MainCamera2D",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (0.0, 0.0, 0.0),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000005"),
+                    "engine_scene::components::SceneCamera2d": (
+                        scale: 1.0,
+                        active: true,
+                    ),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+            4294967257: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::hierarchy::ChildOf": (4294967259),
+                    "bevy_ecs::name::Name": "AccentCircle",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (110.0, -20.0, 0.5),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000004"),
+                    "engine_scene::components::ColorMaterialDesc": (
+                        color: Srgba((
+                            red: 0.32,
+                            green: 0.85,
+                            blue: 0.56,
+                            alpha: 1.0,
+                        )),
+                    ),
+                    "engine_scene::components::MeshPrimitive2d": Circle(
+                        radius: 48.0,
+                    ),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+            4294967258: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::hierarchy::ChildOf": (4294967259),
+                    "bevy_ecs::name::Name": "PlayerSprite",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (-90.0, 20.0, 1.0),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000003"),
+                    "engine_scene::components::SceneEntity": (),
+                    "engine_scene::components::SpriteDesc": (
+                        color: Srgba((
+                            red: 0.24,
+                            green: 0.62,
+                            blue: 0.96,
+                            alpha: 1.0,
+                        )),
+                        custom_size: Some((96.0, 96.0)),
+                        flip_x: false,
+                        flip_y: false,
+                    ),
+                },
+            ),
+            4294967259: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::name::Name": "HeroGroup",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (0.0, 0.0, 0.0),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000002"),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+            4294967260: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::name::Name": "Backdrop",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (0.0, 0.0, -10.0),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000001"),
+                    "engine_scene::components::ColorMaterialDesc": (
+                        color: Srgba((
+                            red: 0.12,
+                            green: 0.15,
+                            blue: 0.21,
+                            alpha: 1.0,
+                        )),
+                    ),
+                    "engine_scene::components::MeshPrimitive2d": Rectangle(
+                        size: (760.0, 440.0),
+                    ),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+        },
+    ),
+)
