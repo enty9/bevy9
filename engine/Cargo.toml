@@ -8,6 +8,7 @@ members = [
   "crates/engine_editor_bridge",
   "crates/engine_runtime",
 ]
+exclude = ["editor/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

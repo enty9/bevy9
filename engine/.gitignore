@@ -9,6 +9,7 @@ dist/
 **/.cache/
 imported_assets/
 **/imported_assets/
+editor/src-tauri/gen/
 
 # Keep asset metadata files tracked inside engine/
 !**/*.meta
