@@ -1,0 +1,29 @@
+[package]
+name = "engine_render"
+description = "2D/3D editor cameras, procedural grids, and dual Offscreen/NativeWindow ViewportTransport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+engine_core = { workspace = true }
+engine_protocol = { workspace = true }
+bevy_app = { workspace = true }
+bevy_asset = { workspace = true }
+bevy_camera = { workspace = true }
+bevy_color = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_gizmos = { workspace = true }
+bevy_image = { workspace = true }
+bevy_input = { workspace = true }
+bevy_math = { workspace = true }
+bevy_render = { workspace = true }
+bevy_time = { workspace = true }
+bevy_transform = { workspace = true }
+bevy_window = { workspace = true }
+crossbeam-channel = { workspace = true }
+tracing = { workspace = true }
