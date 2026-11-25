@@ -1,0 +1,10 @@
+# Local build helpers for the `engine` workspace.
+# Note: On Linux x86_64 with Rust 1.96+, LLD is used by default.
+# On Windows or macOS, optional faster linkers (LLD / lld-link) can be configured
+# in a user-local `.cargo/config.toml` or via environment variables without
+# forcing host-specific binaries here.
+
+[alias]
+check-engine = "check --workspace"
+test-engine = "test --workspace"
+clippy-engine = "clippy --workspace --all-targets -- -D warnings"

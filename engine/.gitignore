@@ -1,0 +1,17 @@
+# Build and frontend artifacts
+target/
+**/target/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.cache/
+**/.cache/
+imported_assets/
+**/imported_assets/
+
+# Keep asset metadata files tracked inside engine/
+!**/*.meta
+
+# Track engine workspace Cargo.lock for reproducible builds
+!Cargo.lock

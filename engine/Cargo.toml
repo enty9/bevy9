@@ -1,0 +1,54 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/engine_core",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.96.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+doc_markdown = "warn"
+manual_let_else = "warn"
+unwrap_or_default = "warn"
+semicolon_if_nothing_returned = "warn"
+
+[workspace.dependencies]
+engine_core = { path = "crates/engine_core" }
+
+bevy = { path = "..", default-features = false }
+bevy_app = { path = "../crates/bevy_app" }
+bevy_asset = { path = "../crates/bevy_asset" }
+bevy_diagnostic = { path = "../crates/bevy_diagnostic" }
+bevy_ecs = { path = "../crates/bevy_ecs" }
+bevy_log = { path = "../crates/bevy_log" }
+bevy_reflect = { path = "../crates/bevy_reflect", features = ["uuid"] }
+bevy_settings = { path = "../crates/bevy_settings" }
+bevy_state = { path = "../crates/bevy_state" }
+bevy_time = { path = "../crates/bevy_time" }
+bevy_transform = { path = "../crates/bevy_transform" }
+bevy_window = { path = "../crates/bevy_window" }
+
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+toml = "1.1"
+tracing = "0.1"
+uuid = { version = "1.26", features = ["v4", "serde"] }
+
+[profile.dev]
+opt-level = 0
+
+[profile.dev.package."*"]
+opt-level = 1
