@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
   "crates/engine_core",
+  "crates/engine_runtime",
 ]
 
 [workspace.package]
@@ -24,6 +25,7 @@ semicolon_if_nothing_returned = "warn"
 
 [workspace.dependencies]
 engine_core = { path = "crates/engine_core" }
+engine_runtime = { path = "crates/engine_runtime" }
 
 bevy = { path = "..", default-features = false }
 bevy_app = { path = "../crates/bevy_app" }

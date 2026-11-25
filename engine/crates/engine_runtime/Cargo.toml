@@ -1,0 +1,35 @@
+[package]
+name = "engine_runtime"
+description = "Engine runtime executable and bootstrapper for headless, window, and editor modes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+dynamic_linking = ["bevy/dynamic_linking"]
+
+[dependencies]
+engine_core = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tracing = { workspace = true }
+bevy = { workspace = true, features = [
+  "2d",
+  "3d",
+  "ui",
+  "serialize",
+  "bevy_remote",
+  "bevy_settings",
+  "bevy_camera_controller",
+  "free_camera",
+  "pan_camera",
+  "pan_orbit_camera",
+  "file_watcher",
+  "asset_processor",
+  "reflect_functions",
+] }
