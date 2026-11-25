@@ -5,6 +5,7 @@ members = [
   "crates/engine_protocol",
   "crates/engine_render",
   "crates/engine_scene",
+  "crates/engine_editor_bridge",
   "crates/engine_runtime",
 ]
 
@@ -31,6 +32,7 @@ engine_core = { path = "crates/engine_core" }
 engine_protocol = { path = "crates/engine_protocol" }
 engine_render = { path = "crates/engine_render" }
 engine_scene = { path = "crates/engine_scene" }
+engine_editor_bridge = { path = "crates/engine_editor_bridge" }
 engine_runtime = { path = "crates/engine_runtime" }
 
 bevy = { path = "..", default-features = false }

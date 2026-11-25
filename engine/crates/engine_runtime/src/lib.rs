@@ -14,11 +14,16 @@ use bevy::{
     log::LogPlugin,
     prelude::*,
     state::app::StatesPlugin,
-    window::{PresentMode, WindowPlugin, WindowResolution},
+    window::{ExitCondition, PresentMode, WindowPlugin, WindowResolution},
 };
 use bootstrap_preview::BootstrapPreviewPlugin;
 use clap::{Parser, ValueEnum};
-use engine_core::{EngineCorePlugin, ProjectManifest, WorldMode};
+use engine_core::{EngineCorePlugin, ProjectManifest, ProjectPaths, WorldMode};
+use engine_editor_bridge::{
+    EditorBridgeConfig, EditorBridgePlugin, EditorIpcServer, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT,
+};
+use engine_render::EngineRenderPlugin;
+use engine_scene::{load_level_from_file, EngineScenePlugin, SceneCameraActivationPolicy};
 
 /// Execution mode for `engine_runtime`.
 #[derive(ValueEnum, Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,6 +49,10 @@ pub struct RuntimeCli {
     #[arg(long)]
     pub project: Option<PathBuf>,
 
+    /// Optional `.level.ron` scene path overriding the project's configured `startup_scene`.
+    #[arg(long)]
+    pub scene: Option<PathBuf>,
+
     /// Runtime execution mode (`headless`, `window`, or `editor`).
     #[arg(long, value_enum, default_value_t = RuntimeMode::Window)]
     pub mode: RuntimeMode,
@@ -63,6 +72,14 @@ pub struct RuntimeCli {
     /// Optional override for the project's default dimensional mode (`2d`, `3d`, or `hybrid`).
     #[arg(long, value_name = "2d|3d|hybrid")]
     pub world_mode: Option<WorldMode>,
+
+    /// TCP port bound by the Bevy Remote Protocol HTTP server in `editor` mode.
+    #[arg(long, default_value_t = DEFAULT_BRP_PORT)]
+    pub brp_port: u16,
+
+    /// TCP port bound by the `WebSocket` IPC + frame server in `editor` mode.
+    #[arg(long, default_value_t = DEFAULT_IPC_PORT)]
+    pub ipc_port: u16,
 }
 
 impl RuntimeCli {
@@ -114,6 +131,9 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
         ),
     };
 
+    let startup_scene_path =
+        resolve_startup_scene_path(cli.scene.as_ref(), paths.as_ref(), &manifest)?;
+
     let mode = cli.effective_mode();
     let world_mode = cli.world_mode.unwrap_or(manifest.project.default_mode);
     let asset_file_path = match &paths {
@@ -164,6 +184,7 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
             ));
         }
         RuntimeMode::Window | RuntimeMode::Editor => {
+            let is_editor = mode == RuntimeMode::Editor;
             let window_title = cli
                 .title
                 .as_deref()
@@ -180,15 +201,25 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
                 resolution: WindowResolution::new(manifest.window.width, manifest.window.height),
                 resizable: manifest.window.resizable,
                 present_mode,
+                visible: !is_editor,
                 ..Default::default()
             };
 
-            let plugins = DefaultPlugins
-                .set(WindowPlugin {
+            let window_plugin = if is_editor {
+                WindowPlugin {
+                    primary_window: Some(primary_window),
+                    exit_condition: ExitCondition::DontExit,
+                    close_when_requested: false,
+                    ..Default::default()
+                }
+            } else {
+                WindowPlugin {
                     primary_window: Some(primary_window),
                     ..Default::default()
-                })
-                .set(asset_plugin);
+                }
+            };
+
+            let plugins = DefaultPlugins.set(window_plugin).set(asset_plugin);
 
             if options.enable_logging {
                 app.add_plugins(plugins);
@@ -197,16 +228,38 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
             }
 
             app.add_plugins(EngineCorePlugin);
+        }
+    }
 
-            match mode {
-                RuntimeMode::Window => {
-                    app.add_plugins(BootstrapPreviewPlugin);
-                }
-                RuntimeMode::Editor => {
-                    app.add_systems(Startup, log_editor_host_boot);
-                }
-                RuntimeMode::Headless => {}
-            }
+    if mode == RuntimeMode::Editor {
+        app.insert_resource(SceneCameraActivationPolicy {
+            allow_scene_cameras: false,
+        });
+    }
+
+    app.add_plugins(EngineScenePlugin);
+
+    if let Some(scene_path) = startup_scene_path {
+        load_level_from_file(app.world_mut(), &scene_path)?;
+        if let Some(override_mode) = cli.world_mode {
+            app.insert_resource(override_mode);
+        }
+    }
+
+    match mode {
+        RuntimeMode::Headless => {}
+        RuntimeMode::Window => {
+            app.insert_resource(ClearColor(Color::srgb(0.08, 0.10, 0.14)));
+            app.add_plugins(BootstrapPreviewPlugin);
+        }
+        RuntimeMode::Editor => {
+            app.insert_resource(EditorBridgeConfig {
+                brp_port: cli.brp_port,
+                ipc_port: cli.ipc_port,
+                ..Default::default()
+            });
+            app.add_plugins((EngineRenderPlugin, EditorBridgePlugin));
+            app.add_systems(Startup, log_editor_host_boot);
         }
     }
 
@@ -227,10 +280,52 @@ pub fn run_from_cli(cli: RuntimeCli) -> anyhow::Result<AppExit> {
     Ok(app.run())
 }
 
-fn log_editor_host_boot(manifest: Res<ProjectManifest>, world_mode: Res<WorldMode>) {
+fn resolve_startup_scene_path(
+    cli_scene: Option<&PathBuf>,
+    paths: Option<&ProjectPaths>,
+    manifest: &ProjectManifest,
+) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(explicit) = cli_scene {
+        let resolved = if explicit.is_relative()
+            && let Some(project_paths) = paths
+            && project_paths.root_dir.join(explicit).exists()
+        {
+            project_paths.root_dir.join(explicit)
+        } else {
+            explicit.clone()
+        };
+        if !resolved.exists() {
+            anyhow::bail!("startup scene file not found: {}", resolved.display());
+        }
+        return Ok(Some(resolved));
+    }
+
+    if let Some(project_paths) = paths {
+        let candidate = project_paths.root_dir.join(&manifest.project.startup_scene);
+        if candidate.exists() {
+            return Ok(Some(candidate));
+        }
+    }
+
+    Ok(None)
+}
+
+fn log_editor_host_boot(
+    manifest: Res<ProjectManifest>,
+    world_mode: Res<WorldMode>,
+    bridge_config: Res<EditorBridgeConfig>,
+    ipc_server: Option<Res<EditorIpcServer>>,
+) {
+    let ipc_addr = ipc_server
+        .as_deref()
+        .map(|server| server.bound_addr().to_string())
+        .unwrap_or_else(|| "disabled".to_owned());
+
     tracing::info!(
         project = %manifest.project.name,
         world_mode = %*world_mode,
+        brp_port = bridge_config.brp_port,
+        ipc_addr = %ipc_addr,
         "engine_runtime booted in Editor Host mode"
     );
 }

@@ -2,6 +2,7 @@
 
 use bevy::{prelude::*, text::FontSize, ui::px};
 use engine_core::{ProjectManifest, WorldMode};
+use engine_scene::{SceneEntity, SceneHydrationSystems};
 
 /// Marker component for the animated object in the Stage 0 bootstrap preview.
 #[derive(Component, Debug, Clone, Copy)]
@@ -17,21 +18,29 @@ pub struct BootstrapPreviewPlugin;
 
 impl Plugin for BootstrapPreviewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(PostStartup, spawn_bootstrap_preview_if_empty)
-            .add_systems(Update, animate_bootstrap_spinner);
+        app.add_systems(
+            PostStartup,
+            spawn_bootstrap_preview_if_empty.after(SceneHydrationSystems),
+        )
+        .add_systems(Update, animate_bootstrap_spinner);
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Queries fallback state and inserts meshes, materials, lights, and UI"
+)]
 fn spawn_bootstrap_preview_if_empty(
     mut commands: Commands,
     cameras: Query<(), With<Camera>>,
+    scene_entities: Query<(), With<SceneEntity>>,
     manifest: Option<Res<ProjectManifest>>,
     world_mode: Option<Res<WorldMode>>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut standard_materials: ResMut<Assets<StandardMaterial>>,
     mut color_materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    if !cameras.is_empty() {
+    if !cameras.is_empty() || !scene_entities.is_empty() {
         return;
     }
 

@@ -15,6 +15,10 @@ dynamic_linking = ["bevy/dynamic_linking"]
 
 [dependencies]
 engine_core = { workspace = true }
+engine_protocol = { workspace = true }
+engine_scene = { workspace = true }
+engine_render = { workspace = true }
+engine_editor_bridge = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
