@@ -10,8 +10,12 @@ use bevy_ecs::{
 };
 use bevy_math::{Vec2, Vec3};
 use bevy_reflect::{std_traits::ReflectDefault, Reflect};
-use engine_core::WorldMode;
+use engine_core::{AssetUuid, WorldMode};
 use serde::{Deserialize, Serialize};
+
+const fn default_one() -> f32 {
+    1.0
+}
 
 /// Marker component tagging entities that belong to the authored level scene.
 ///
@@ -64,6 +68,9 @@ impl Default for MeshPrimitive3d {
 pub struct StandardMaterialDesc {
     /// Base albedo color.
     pub base_color: Color,
+    /// Optional albedo texture [`AssetUuid`] resolved via `AssetRegistry`.
+    #[serde(default)]
+    pub base_color_texture: Option<AssetUuid>,
     /// Metallic factor in `[0.0, 1.0]`.
     pub metallic: f32,
     /// Perceptual roughness in `[0.0, 1.0]`.
@@ -76,6 +83,7 @@ impl Default for StandardMaterialDesc {
     fn default() -> Self {
         Self {
             base_color: Color::srgb(0.8, 0.82, 0.86),
+            base_color_texture: None,
             metallic: 0.0,
             perceptual_roughness: 0.5,
             emissive: LinearRgba::BLACK,
@@ -129,6 +137,12 @@ impl Default for ColorMaterialDesc {
 pub struct SpriteDesc {
     /// Tint color of the sprite.
     pub color: Color,
+    /// Optional sprite image texture [`AssetUuid`] resolved via `AssetRegistry`.
+    #[serde(default)]
+    pub texture: Option<AssetUuid>,
+    /// Optional sprite-sheet atlas frame index when `texture` defines an `atlas_grid`.
+    #[serde(default)]
+    pub atlas_index: Option<usize>,
     /// Optional explicit sprite dimensions in world/pixel units.
     pub custom_size: Option<Vec2>,
     /// Mirror horizontally.
@@ -141,9 +155,57 @@ impl Default for SpriteDesc {
     fn default() -> Self {
         Self {
             color: Color::srgb(0.95, 0.55, 0.25),
+            texture: None,
+            atlas_index: None,
             custom_size: Some(Vec2::splat(64.0)),
             flip_x: false,
             flip_y: false,
+        }
+    }
+}
+
+/// Serializable 3D `glTF`/GLB model descriptor hydrated into a child `WorldAssetRoot`.
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[reflect(Component, Default)]
+pub struct SceneGltfModel {
+    /// Linked `.glb`/`.gltf` asset [`AssetUuid`].
+    #[serde(default)]
+    pub asset: Option<AssetUuid>,
+    /// Embedded `glTF` scene index to instantiate (`Scene{index}`).
+    #[serde(default)]
+    pub scene_index: usize,
+    /// Entity-local uniform scale multiplier combined with `.b9meta` glTF import scale.
+    #[serde(default = "default_one")]
+    pub scale_multiplier: f32,
+}
+
+impl Default for SceneGltfModel {
+    fn default() -> Self {
+        Self {
+            asset: None,
+            scene_index: 0,
+            scale_multiplier: 1.0,
+        }
+    }
+}
+
+/// Serializable 2D tilemap descriptor hydrated into child tile [`bevy_sprite::Sprite`] entities.
+#[derive(Component, Reflect, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[reflect(Component, Default)]
+pub struct SceneTilemap {
+    /// Linked `.tilemap.ron` asset [`AssetUuid`].
+    #[serde(default)]
+    pub asset: Option<AssetUuid>,
+    /// Uniform world-unit multiplier applied to hydrated tile positions and sizes.
+    #[serde(default = "default_one")]
+    pub tile_scale: f32,
+}
+
+impl Default for SceneTilemap {
+    fn default() -> Self {
+        Self {
+            asset: None,
+            tile_scale: 1.0,
         }
     }
 }

@@ -22,7 +22,8 @@ use bevy_world_serialization::{
     serde::{DynamicWorldSerializer, WorldDeserializer},
     DynamicWorld, DynamicWorldBuilder, WorldFilter,
 };
-use engine_core::{EntityGuid, EntityGuidMap};
+use engine_assets::{load_or_create_meta, SharedAssetRegistry};
+use engine_core::{AssetUuid, EntityGuid, EntityGuidMap};
 use engine_protocol::PrefabFileEntry;
 use ron::ser::PrettyConfig;
 use serde::{
@@ -53,6 +54,9 @@ pub const PREFAB_COMPONENT_REMOVED: &str = "__prefab_removed__";
 )]
 #[reflect(Component, Default, Serialize, Deserialize)]
 pub struct PrefabInstance {
+    /// Persistent [`AssetUuid`] of the linked `.prefab.ron` asset when indexed inside `assets/`.
+    #[serde(default)]
+    pub prefab_uuid: Option<AssetUuid>,
     /// Normalized path to the linked `.prefab.ron` asset (relative to the project root when inside it).
     pub prefab_path: String,
     /// Template root [`EntityGuid`] inside the referenced `.prefab.ron` file.
@@ -414,7 +418,9 @@ pub fn save_prefab_to_file(
             source_guid,
         });
     }
+    let prefab_uuid = resolve_or_create_prefab_uuid(world, abs_path, prefab_path_key);
     world.entity_mut(root).insert(PrefabInstance {
+        prefab_uuid,
         prefab_path: prefab_path_key.to_owned(),
         root_source_guid,
         overrides: BTreeMap::new(),
@@ -502,7 +508,9 @@ pub fn spawn_prefab_from_file(
         });
     }
 
+    let prefab_uuid = resolve_or_create_prefab_uuid(world, abs_path, prefab_path_key);
     world.entity_mut(spawned_root).insert(PrefabInstance {
+        prefab_uuid,
         prefab_path: prefab_path_key.to_owned(),
         root_source_guid: parsed.root_source_guid,
         overrides: BTreeMap::new(),
@@ -904,6 +912,66 @@ fn collect_prefab_files_recursive(
             });
         }
     }
+}
+
+/// Resolves the filesystem path to `inst`'s `.prefab.ron` asset, preferring [`PrefabInstance::prefab_uuid`]
+/// in `registry` before falling back to [`PrefabInstance::prefab_path`].
+#[must_use]
+pub fn resolve_prefab_abs_path(
+    inst: &PrefabInstance,
+    project_root: Option<&Path>,
+    registry: Option<&SharedAssetRegistry>,
+) -> Option<PathBuf> {
+    if let Some(uuid) = inst.prefab_uuid
+        && let Some(reg) = registry
+        && let Some(abs) = reg.resolve_abs_path(uuid)
+    {
+        return Some(abs);
+    }
+    if inst.prefab_path.is_empty() {
+        return None;
+    }
+    let candidate = Path::new(&inst.prefab_path);
+    if candidate.is_absolute() {
+        Some(candidate.to_path_buf())
+    } else if let Some(root) = project_root {
+        Some(root.join(candidate))
+    } else {
+        Some(candidate.to_path_buf())
+    }
+}
+
+fn resolve_or_create_prefab_uuid(
+    world: &World,
+    abs_path: &Path,
+    prefab_path_key: &str,
+) -> Option<AssetUuid> {
+    if let Some(shared) = world.get_resource::<SharedAssetRegistry>() {
+        let key_norm = prefab_path_key.replace('\\', "/");
+        if let Some(record) = shared.get_by_path(&key_norm) {
+            return Some(record.uuid);
+        }
+        if let Some(stripped) = key_norm.strip_prefix("assets/")
+            && let Some(record) = shared.get_by_path(stripped)
+        {
+            return Some(record.uuid);
+        }
+
+        let assets_dir = shared.assets_dir();
+        let inside_assets = abs_path.starts_with(&assets_dir)
+            || (abs_path.canonicalize().ok().is_some_and(|canon_file| {
+                assets_dir
+                    .canonicalize()
+                    .ok()
+                    .is_some_and(|canon_dir| canon_file.starts_with(&canon_dir))
+            }));
+        if inside_assets
+            && let Ok((meta, _)) = load_or_create_meta(abs_path)
+        {
+            return Some(meta.uuid);
+        }
+    }
+    None
 }
 
 /// Resolves the [`PrefabInstance`] root `(entity, prefab_path)` starting from `entity` or its [`PrefabMember`].

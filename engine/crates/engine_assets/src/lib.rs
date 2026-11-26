@@ -1,15 +1,20 @@
 //! Asset management crate: UUID `.b9meta` sidecars, [`AssetRegistry`], `uuid://` source, importers, DDC, thumbnails, and file watcher.
 
 pub mod error;
+pub mod importers;
 pub mod meta;
 pub mod registry;
 pub mod source;
+pub mod tilemap;
 pub mod watcher;
 
 /// Commonly used types and helpers exported by `engine_assets`.
 pub mod prelude {
     pub use crate::{
         error::AssetError,
+        importers::{
+            build_atlas_layout_for_uuid, load_gltf_scene_by_uuid, load_image_by_uuid,
+        },
         meta::{
             compute_file_blake3, extract_uuid_references_from_text_asset, infer_asset_kind,
             inspect_gltf_sub_assets, load_or_create_meta, meta_path_for, save_meta_file,
@@ -17,23 +22,35 @@ pub mod prelude {
         },
         registry::{AssetRegistry, ScanReport, SharedAssetRegistry},
         source::{register_uuid_asset_source, UuidAssetReader, UUID_ASSET_SOURCE},
+        tilemap::{
+            load_tilemap_from_file, save_tilemap_to_file, TileMetadata, TilemapAsset,
+            TilemapAssetLoader, TilemapLayer, CURRENT_TILEMAP_VERSION,
+        },
         watcher::{poll_asset_watcher_system, AssetWatcherResource},
         EngineAssetsPlugin,
     };
 }
 
 use bevy_app::{App, Plugin, Update};
+use bevy_asset::{AssetApp, AssetServer};
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use engine_core::{schedule::EngineSet, ProjectPaths};
 
 pub use prelude::*;
 
-/// Plugin initializing [`AssetRegistry`], starting the filesystem watcher, and scheduling hot-reload polling.
+/// Plugin initializing [`AssetRegistry`], asset loaders, filesystem watcher, and hot-reload polling.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EngineAssetsPlugin;
 
 impl Plugin for EngineAssetsPlugin {
     fn build(&self, app: &mut App) {
+        if app.world().contains_resource::<AssetServer>() {
+            app.init_asset::<TilemapAsset>()
+                .init_asset_loader::<TilemapAssetLoader>();
+        }
+        app.register_type::<TilemapAsset>()
+            .register_type::<TilemapLayer>()
+            .register_type::<TileMetadata>();
         let mut registry = if let Some(existing) = app.world().get_resource::<AssetRegistry>() {
             existing.clone()
         } else if let Some(shared) = app.world().get_resource::<SharedAssetRegistry>() {

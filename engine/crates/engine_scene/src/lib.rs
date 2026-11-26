@@ -12,14 +12,15 @@ pub mod prelude {
         components::{
             ActiveScene, ColorMaterialDesc, MeshPrimitive2d, MeshPrimitive3d, SceneCamera2d,
             SceneCamera3d, SceneCameraActivationPolicy, SceneDirectionalLight, SceneEntity,
-            ScenePointLight, SpriteDesc, StandardMaterialDesc,
+            SceneGltfModel, ScenePointLight, SceneTilemap, SpriteDesc, StandardMaterialDesc,
         },
+        hydration::{HydratedGltfModelRoot, HydratedTilemapTile},
         prefab::{
             apply_prefab_instance, ensure_prefab_extension, list_prefab_files,
             normalize_prefab_path, prefab_component_override_key, prefab_field_override_key,
-            resolve_prefab_instance_root, revert_prefab_instance, save_prefab_to_file,
-            spawn_prefab_from_file, sync_prefab_instance_overrides, PrefabInstance, PrefabMember,
-            CURRENT_PREFAB_VERSION, PREFAB_COMPONENT_REMOVED,
+            resolve_prefab_abs_path, resolve_prefab_instance_root, revert_prefab_instance,
+            save_prefab_to_file, spawn_prefab_from_file, sync_prefab_instance_overrides,
+            PrefabInstance, PrefabMember, CURRENT_PREFAB_VERSION, PREFAB_COMPONENT_REMOVED,
         },
         presets::{default_preset_name, spawn_preset},
         serialization::{
@@ -44,7 +45,7 @@ use bevy_ecs::{
     schedule::{IntoScheduleConfigs, SystemSet},
 };
 use bevy_transform::components::Transform;
-use engine_core::{schedule::EngineSet, EntityGuid, WorldMode};
+use engine_core::{schedule::EngineSet, AssetUuid, EntityGuid, WorldMode};
 
 pub use prelude::*;
 
@@ -62,7 +63,10 @@ impl Plugin for EngineScenePlugin {
             app.init_resource::<AppTypeRegistry>();
         }
 
-        app.register_type::<EntityGuid>()
+        app.register_type::<AssetUuid>()
+            .register_type::<Option<AssetUuid>>()
+            .register_type::<Option<usize>>()
+            .register_type::<EntityGuid>()
             .register_type::<WorldMode>()
             .register_type::<Name>()
             .register_type::<Transform>()
@@ -76,6 +80,8 @@ impl Plugin for EngineScenePlugin {
             .register_type::<MeshPrimitive2d>()
             .register_type::<ColorMaterialDesc>()
             .register_type::<SpriteDesc>()
+            .register_type::<SceneGltfModel>()
+            .register_type::<SceneTilemap>()
             .register_type::<SceneCamera3d>()
             .register_type::<SceneCamera2d>()
             .register_type::<SceneDirectionalLight>()
@@ -120,6 +126,8 @@ impl Plugin for EngineScenePlugin {
             .allow::<MeshPrimitive2d>()
             .allow::<ColorMaterialDesc>()
             .allow::<SpriteDesc>()
+            .allow::<SceneGltfModel>()
+            .allow::<SceneTilemap>()
             .allow::<SceneCamera3d>()
             .allow::<SceneCamera2d>()
             .allow::<SceneDirectionalLight>()
@@ -131,23 +139,37 @@ impl Plugin for EngineScenePlugin {
         app.add_systems(
             PostStartup,
             (
-                hydration::hydrate_3d_meshes_and_materials,
-                hydration::hydrate_2d_meshes_and_materials,
-                hydration::hydrate_sprites,
-                hydration::hydrate_lights,
-                hydration::hydrate_cameras,
+                hydration::flush_asset_rehydration_signals,
+                (
+                    hydration::hydrate_3d_meshes_and_materials,
+                    hydration::hydrate_2d_meshes_and_materials,
+                    hydration::hydrate_sprites,
+                    hydration::hydrate_gltf_models,
+                    hydration::tag_gltf_meshes_pickable,
+                    hydration::hydrate_tilemaps,
+                    hydration::hydrate_lights,
+                    hydration::hydrate_cameras,
+                ),
             )
+                .chain()
                 .in_set(SceneHydrationSystems),
         )
         .add_systems(
             Update,
             (
-                hydration::hydrate_3d_meshes_and_materials,
-                hydration::hydrate_2d_meshes_and_materials,
-                hydration::hydrate_sprites,
-                hydration::hydrate_lights,
-                hydration::hydrate_cameras,
+                hydration::flush_asset_rehydration_signals,
+                (
+                    hydration::hydrate_3d_meshes_and_materials,
+                    hydration::hydrate_2d_meshes_and_materials,
+                    hydration::hydrate_sprites,
+                    hydration::hydrate_gltf_models,
+                    hydration::tag_gltf_meshes_pickable,
+                    hydration::hydrate_tilemaps,
+                    hydration::hydrate_lights,
+                    hydration::hydrate_cameras,
+                ),
             )
+                .chain()
                 .in_set(SceneHydrationSystems)
                 .in_set(EngineSet::Gameplay),
         );

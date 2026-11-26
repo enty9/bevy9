@@ -191,6 +191,7 @@ fn roundtrip_2d_scene_preserves_guids_sprites_and_editor_camera_policy() {
             custom_size: Some(Vec2::new(64.0, 96.0)),
             flip_x: true,
             flip_y: false,
+            ..Default::default()
         });
 
     let (_, circle_guid) = spawn_preset(
