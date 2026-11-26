@@ -2,8 +2,12 @@
 
 use engine_core::{EntityGuid, WorldMode};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::{ipc::SceneTreeNode, viewport::ViewportMode};
+use crate::{
+    ipc::{HistoryStatePayload, SceneTreeNode},
+    viewport::ViewportMode,
+};
 
 /// BRP method name for creating a new empty scene.
 pub const METHOD_SCENE_NEW: &str = "engine.scene.new";
@@ -22,6 +26,30 @@ pub const METHOD_ENTITY_SPAWN_PRESET: &str = "engine.entity.spawn_preset";
 
 /// BRP method name for switching viewport mode (`offscreen` / `native_window`).
 pub const METHOD_VIEWPORT_SET_MODE: &str = "engine.viewport.set_mode";
+
+/// BRP method name for undoing the latest editor transaction.
+pub const METHOD_HISTORY_UNDO: &str = "engine.history.undo";
+
+/// BRP method name for redoing the most recently undone editor transaction.
+pub const METHOD_HISTORY_REDO: &str = "engine.history.redo";
+
+/// BRP method name for querying the current Undo/Redo stack status.
+pub const METHOD_HISTORY_STATE: &str = "engine.history.state";
+
+/// BRP method name for transactionally deleting an entity and its descendant subtree.
+pub const METHOD_ENTITY_DELETE: &str = "engine.entity.delete";
+
+/// BRP method name for transactionally reparenting an entity under a new parent or scene root.
+pub const METHOD_ENTITY_REPARENT: &str = "engine.entity.reparent";
+
+/// BRP method name for transactionally setting a component value on an entity (with optional coalescing).
+pub const METHOD_COMPONENT_SET: &str = "engine.component.set";
+
+/// BRP method name for transactionally adding a component to an entity.
+pub const METHOD_COMPONENT_ADD: &str = "engine.component.add";
+
+/// BRP method name for transactionally removing a component from an entity.
+pub const METHOD_COMPONENT_REMOVE: &str = "engine.component.remove";
 
 /// Parameters for [`METHOD_SCENE_NEW`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,4 +166,93 @@ pub struct SetViewportModeParams {
 pub struct SetViewportModeResult {
     /// Resulting active viewport presentation mode.
     pub mode: ViewportMode,
+}
+
+/// Response returned by [`METHOD_HISTORY_UNDO`] and [`METHOD_HISTORY_REDO`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryStepResult {
+    /// Whether an undo or redo command was executed.
+    pub applied: bool,
+    /// Human-readable label of the executed command, if [`Self::applied`] is `true`.
+    pub label: Option<String>,
+    /// Resulting Undo/Redo stack summary after the step.
+    pub state: HistoryStatePayload,
+}
+
+/// Parameters for [`METHOD_ENTITY_DELETE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteEntityParams {
+    /// Persistent [`EntityGuid`] of the entity subtree root to delete.
+    pub guid: EntityGuid,
+}
+
+/// Response returned by [`METHOD_ENTITY_DELETE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteEntityResult {
+    /// Persistent [`EntityGuid`]s of the deleted root and all despawned descendants.
+    pub deleted_guids: Vec<EntityGuid>,
+}
+
+/// Parameters for [`METHOD_ENTITY_REPARENT`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReparentEntityParams {
+    /// Persistent [`EntityGuid`] of the child entity to reparent.
+    pub guid: EntityGuid,
+    /// New parent [`EntityGuid`], or `None` to move to the scene root.
+    pub parent_guid: Option<EntityGuid>,
+}
+
+/// Response returned by [`METHOD_ENTITY_REPARENT`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReparentEntityResult {
+    /// Target entity [`EntityGuid`].
+    pub guid: EntityGuid,
+    /// Resulting parent [`EntityGuid`], if any.
+    pub parent_guid: Option<EntityGuid>,
+}
+
+/// Parameters for [`METHOD_COMPONENT_SET`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetComponentParams {
+    /// Target entity persistent [`EntityGuid`].
+    pub guid: EntityGuid,
+    /// Fully-qualified reflected component type path.
+    pub type_path: String,
+    /// Serialized component JSON value matching BRP format.
+    pub value: Value,
+    /// Optional coalescing key to merge continuous edits within the merge window.
+    #[serde(default)]
+    pub merge_key: Option<String>,
+    /// Optional human-readable command label override for the Undo history stack.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// Parameters for [`METHOD_COMPONENT_ADD`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AddComponentParams {
+    /// Target entity persistent [`EntityGuid`].
+    pub guid: EntityGuid,
+    /// Fully-qualified reflected component type path to insert.
+    pub type_path: String,
+    /// Initial serialized component JSON value matching BRP format.
+    pub value: Value,
+}
+
+/// Parameters for [`METHOD_COMPONENT_REMOVE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveComponentParams {
+    /// Target entity persistent [`EntityGuid`].
+    pub guid: EntityGuid,
+    /// Fully-qualified reflected component type path to remove.
+    pub type_path: String,
+}
+
+/// Response returned by [`METHOD_COMPONENT_SET`], [`METHOD_COMPONENT_ADD`], and [`METHOD_COMPONENT_REMOVE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ComponentMutationResult {
+    /// Target entity persistent [`EntityGuid`].
+    pub guid: EntityGuid,
+    /// Component type path that was mutated.
+    pub type_path: String,
 }

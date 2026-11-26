@@ -6,6 +6,7 @@ import {
   type EditorLogEntry,
   type FrameMetrics,
   type GizmoStatePayload,
+  type HistoryStatePayload,
   type SceneTreeNode,
   type ServerIpcMessage,
   type ViewportCameraMode,
@@ -33,6 +34,7 @@ export class EditorIpcClient {
   private readonly viewportStateListeners = new Set<Listener<ViewportStatePayload>>();
   private readonly gizmoStateListeners = new Set<Listener<GizmoStatePayload>>();
   private readonly inspectorRefreshListeners = new Set<Listener<string[]>>();
+  private readonly historyStateListeners = new Set<Listener<HistoryStatePayload>>();
   private readonly metricsListeners = new Set<Listener<FrameMetrics>>();
   private readonly logListeners = new Set<Listener<EditorLogEntry>>();
   private readonly errorListeners = new Set<Listener<string>>();
@@ -139,6 +141,13 @@ export class EditorIpcClient {
     this.inspectorRefreshListeners.add(listener);
     return () => {
       this.inspectorRefreshListeners.delete(listener);
+    };
+  }
+
+  onHistoryState(listener: Listener<HistoryStatePayload>): () => void {
+    this.historyStateListeners.add(listener);
+    return () => {
+      this.historyStateListeners.delete(listener);
     };
   }
 
@@ -269,6 +278,11 @@ export class EditorIpcClient {
       case "inspector_refresh":
         for (const listener of this.inspectorRefreshListeners) {
           listener(parsed.guids);
+        }
+        break;
+      case "history_state_changed":
+        for (const listener of this.historyStateListeners) {
+          listener(parsed.state);
         }
         break;
       case "log":

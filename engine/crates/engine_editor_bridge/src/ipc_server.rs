@@ -37,7 +37,10 @@ use engine_render::{
 use engine_scene::{build_scene_tree, ActiveScene, SceneEntity};
 use tungstenite::{accept, Message};
 
-use crate::selection::{BridgeDirtyFlags, EditorSelection};
+use crate::{
+    history::EditorHistory,
+    selection::{BridgeDirtyFlags, EditorSelection},
+};
 
 /// Incoming IPC message tagged with its originating `WebSocket` client ID.
 #[derive(Debug, Clone)]
@@ -473,6 +476,11 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
         .map(|s| s.guids().to_vec())
         .unwrap_or_default();
 
+    let history_state = world
+        .get_resource::<EditorHistory>()
+        .map(EditorHistory::state)
+        .unwrap_or_default();
+
     let roots = build_scene_tree(world);
 
     let Some(ipc) = world.get_resource::<EditorIpcServer>() else {
@@ -524,6 +532,12 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
             snap: gizmo_snap,
         },
     );
+    ipc.send_to(
+        client_id,
+        &ServerIpcMessage::HistoryStateChanged {
+            state: history_state,
+        },
+    );
 }
 
 pub(crate) fn publish_ipc_updates(world: &mut World) {
@@ -557,10 +571,28 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
             }
         });
 
-    let refresh_guids = world
+    let mut refresh_guids = world
         .get_resource_mut::<TransformGizmoState>()
         .map(|mut gizmo| core::mem::take(&mut gizmo.inspector_refresh_guids))
         .unwrap_or_default();
+
+    let (history_update, history_refresh) = world
+        .get_resource_mut::<EditorHistory>()
+        .map_or((None, Vec::new()), |mut history| {
+            let state = if history.dirty {
+                history.dirty = false;
+                Some(history.state())
+            } else {
+                None
+            };
+            let guids = core::mem::take(&mut history.pending_inspector_refresh);
+            (state, guids)
+        });
+    for guid in history_refresh {
+        if !refresh_guids.contains(&guid) {
+            refresh_guids.push(guid);
+        }
+    }
 
     let latest_packet = drain_latest_viewport_frame(world);
 
@@ -616,6 +648,12 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
         && let Some(ipc) = world.get_resource::<EditorIpcServer>()
     {
         ipc.broadcast_message(&ServerIpcMessage::GizmoStateChanged { mode, space, snap });
+    }
+
+    if let Some(state) = history_update
+        && let Some(ipc) = world.get_resource::<EditorIpcServer>()
+    {
+        ipc.broadcast_message(&ServerIpcMessage::HistoryStateChanged { state });
     }
 
     if !refresh_guids.is_empty()

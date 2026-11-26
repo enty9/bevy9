@@ -47,6 +47,23 @@ pub struct FrameMetrics {
     pub scene_entity_count: usize,
 }
 
+/// Undo/redo command stack availability state published to the editor UI.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryStatePayload {
+    /// Whether at least one undo entry is available.
+    pub can_undo: bool,
+    /// Whether at least one redo entry is available.
+    pub can_redo: bool,
+    /// Label of the next operation to undo, if any.
+    pub undo_label: Option<String>,
+    /// Label of the next operation to redo, if any.
+    pub redo_label: Option<String>,
+    /// Number of entries currently stored on the undo stack.
+    pub undo_len: usize,
+    /// Number of entries currently stored on the redo stack.
+    pub redo_len: usize,
+}
+
 /// Hierarchical representation of a scene entity for the editor World Outliner.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneTreeNode {
@@ -168,6 +185,11 @@ pub enum ServerIpcMessage {
     InspectorRefresh {
         /// Persistent GUIDs of entities whose components changed in the runtime.
         guids: Vec<EntityGuid>,
+    },
+    /// Notification that Undo/Redo stack availability or labels changed.
+    HistoryStateChanged {
+        /// Updated history stack summary.
+        state: HistoryStatePayload,
     },
     /// Log entry emitted by the runtime.
     Log {

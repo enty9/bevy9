@@ -15,11 +15,14 @@ use bevy_ecs::{
     entity::{Entity, EntityHashMap},
     hierarchy::{ChildOf, Children},
     name::Name,
-    reflect::AppTypeRegistry,
+    reflect::{AppTypeRegistry, ReflectComponent},
     resource::Resource,
     world::World,
 };
-use bevy_reflect::TypeRegistry;
+use bevy_reflect::{
+    serde::{ReflectSerializer, TypedReflectDeserializer},
+    PartialReflect, TypeRegistry,
+};
 use bevy_world_serialization::{
     serde::{DynamicWorldSerializer, WorldDeserializer},
     DynamicWorld, DynamicWorldBuilder, WorldFilter, WorldInstanceSpawnError,
@@ -32,6 +35,7 @@ use serde::{
     ser::SerializeStruct,
     Deserialize, Deserializer, Serialize, Serializer,
 };
+use serde_json::Value;
 use thiserror::Error;
 
 use crate::components::{ActiveScene, SceneEntity};
@@ -118,6 +122,9 @@ pub enum SceneError {
     /// Failed to instantiate a deserialized [`DynamicWorld`] into the ECS [`World`].
     #[error("failed to instantiate scene world: {0}")]
     Spawn(#[from] WorldInstanceSpawnError),
+    /// Reflection lookup or JSON conversion error.
+    #[error("reflection serialization error: {0}")]
+    Reflection(String),
 }
 
 /// Removes all entities marked with [`SceneEntity`] from `world`.
@@ -295,6 +302,296 @@ pub fn load_level_from_file(
         active_scene.path = Some(path.to_path_buf());
     }
     Ok(metadata)
+}
+
+/// Serialized snapshot of a scene entity subtree (used for Undo/Redo and subtree duplication).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubtreeSnapshot {
+    /// Persistent [`EntityGuid`] of the subtree root.
+    pub root_guid: EntityGuid,
+    /// Persistent [`EntityGuid`] of the subtree root's parent at snapshot time, if any.
+    pub parent_guid: Option<EntityGuid>,
+    /// Serialized [`DynamicWorld`] RON containing the root and all its descendants.
+    pub ron: String,
+}
+
+/// Collects `root` followed by all descendants in parent-before-child BFS order (cycle-safe).
+#[must_use]
+pub fn collect_subtree_entities(world: &World, root: Entity) -> Vec<Entity> {
+    if world.get_entity(root).is_err() {
+        return Vec::new();
+    }
+
+    let mut parent_to_children: HashMap<Entity, Vec<Entity>> = HashMap::new();
+    for archetype in world.archetypes().iter() {
+        for arch_entity in archetype.entities() {
+            let entity = arch_entity.id();
+            if let Some(child_of) = world.get::<ChildOf>(entity) {
+                parent_to_children
+                    .entry(child_of.parent())
+                    .or_default()
+                    .push(entity);
+            }
+        }
+    }
+
+    let mut ordered = Vec::new();
+    let mut visited = HashSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    visited.insert(root);
+    queue.push_back(root);
+
+    while let Some(current) = queue.pop_front() {
+        ordered.push(current);
+        let mut children_list = Vec::new();
+        if let Some(children) = world.get::<Children>(current) {
+            children_list.extend(children.iter());
+        }
+        if let Some(scanned) = parent_to_children.get(&current) {
+            children_list.extend(scanned.iter().copied());
+        }
+        for child in children_list {
+            if visited.insert(child) && world.get_entity(child).is_ok() {
+                queue.push_back(child);
+            }
+        }
+    }
+
+    ordered
+}
+
+/// Captures a serialized [`SubtreeSnapshot`] of `root` and all its descendants.
+pub fn snapshot_subtree(world: &World, root: Entity) -> Result<SubtreeSnapshot, SceneError> {
+    let entity_ref = world
+        .get_entity(root)
+        .map_err(|_| SceneError::Reflection(format!("Entity {root:?} does not exist")))?;
+
+    let root_guid = entity_ref.get::<EntityGuid>().copied().ok_or_else(|| {
+        SceneError::Reflection(format!("Entity {root:?} has no EntityGuid component"))
+    })?;
+
+    let parent_guid = entity_ref
+        .get::<ChildOf>()
+        .and_then(|child_of| world.get::<EntityGuid>(child_of.parent()).copied());
+
+    let subtree_entities = collect_subtree_entities(world, root);
+    let type_registry = world.resource::<AppTypeRegistry>().read();
+    let filter = world
+        .get_resource::<SceneSerializationFilter>()
+        .map(SceneSerializationFilter::to_world_filter)
+        .unwrap_or_else(WorldFilter::allow_all);
+
+    let mut dynamic_world = DynamicWorldBuilder::from_world(world, &type_registry)
+        .with_component_filter(filter)
+        .with_resource_filter(WorldFilter::deny_all())
+        .extract_entities(subtree_entities.into_iter())
+        .build();
+
+    // Strip external `ChildOf` from the root so restoring into a world where the
+    // old parent Entity ID changed or no longer exists never fails mapping.
+    for de in &mut dynamic_world.entities {
+        if de.entity == root {
+            de.components.retain(|comp| {
+                comp.get_represented_type_info()
+                    .is_none_or(|ti| ti.type_id() != TypeId::of::<ChildOf>())
+            });
+        }
+    }
+
+    let serializer = DynamicWorldSerializer::new(&dynamic_world, &type_registry);
+    let ron = ron::ser::to_string_pretty(&serializer, PrettyConfig::default())?;
+    Ok(SubtreeSnapshot {
+        root_guid,
+        parent_guid,
+        ron,
+    })
+}
+
+/// Restores a subtree previously captured with [`snapshot_subtree`], preserving GUIDs and hierarchy.
+pub fn respawn_subtree_from_snapshot(
+    world: &mut World,
+    snapshot: &SubtreeSnapshot,
+) -> Result<Entity, SceneError> {
+    let type_registry = world.resource::<AppTypeRegistry>().clone();
+    let asset_server = world.get_resource::<AssetServer>().cloned();
+
+    let dynamic_world = {
+        let registry_guard = type_registry.read();
+        let mut noop_loader = NoopLoadFromPath;
+        let mut active_server = asset_server;
+        let load_from_path: &mut dyn LoadFromPath = match active_server.as_mut() {
+            Some(server) => server,
+            None => &mut noop_loader,
+        };
+
+        let mut deserializer = ron::de::Deserializer::from_str(&snapshot.ron)?;
+        let world_deserializer = WorldDeserializer {
+            type_registry: &registry_guard,
+            load_from_path,
+        };
+        world_deserializer
+            .deserialize(&mut deserializer)
+            .map_err(|err| deserializer.span_error(err))?
+    };
+
+    let mut entity_map = EntityHashMap::default();
+    {
+        let registry_guard = type_registry.read();
+        dynamic_world.write_to_world_with(world, &mut entity_map, &registry_guard)?;
+    }
+
+    let spawned_entities: Vec<Entity> = entity_map.values().copied().collect();
+    restore_hierarchy_children(world, &spawned_entities);
+    ensure_scene_guids(world, &spawned_entities);
+
+    let spawned_root = world
+        .get_resource::<EntityGuidMap>()
+        .and_then(|map| map.get_entity(snapshot.root_guid))
+        .or_else(|| {
+            spawned_entities.iter().copied().find(|&e| {
+                world
+                    .get::<EntityGuid>(e)
+                    .is_some_and(|guid| *guid == snapshot.root_guid)
+            })
+        })
+        .ok_or_else(|| {
+            SceneError::Reflection(format!(
+                "Respawned subtree did not produce root GUID {}",
+                snapshot.root_guid
+            ))
+        })?;
+
+    if let Some(parent_guid) = snapshot.parent_guid
+        && let Some(parent_entity) = world
+            .get_resource::<EntityGuidMap>()
+            .and_then(|map| map.get_entity(parent_guid))
+        && world.get_entity(parent_entity).is_ok()
+    {
+        world.entity_mut(spawned_root).insert(ChildOf(parent_entity));
+    }
+
+    Ok(spawned_root)
+}
+
+/// Despawns `root` and its entire descendant subtree, returning all despawned [`EntityGuid`]s.
+pub fn despawn_subtree(world: &mut World, root: Entity) -> Vec<EntityGuid> {
+    let entities = collect_subtree_entities(world, root);
+    let guids: Vec<EntityGuid> = entities
+        .iter()
+        .filter_map(|&e| world.get::<EntityGuid>(e).copied())
+        .collect();
+
+    if world.get_entity(root).is_ok() {
+        world.despawn(root);
+    }
+    for entity in entities {
+        if world.get_entity(entity).is_ok() {
+            world.despawn(entity);
+        }
+    }
+
+    guids
+}
+
+/// Reads a single reflected component on `entity` as BRP-compatible JSON (`None` if absent).
+pub fn read_reflected_component_json(
+    world: &World,
+    entity: Entity,
+    type_path: &str,
+) -> Result<Option<Value>, SceneError> {
+    let entity_ref = world
+        .get_entity(entity)
+        .map_err(|_| SceneError::Reflection(format!("Entity {entity:?} does not exist")))?;
+    let type_registry = world.resource::<AppTypeRegistry>().read();
+    let registration = type_registry
+        .get_with_type_path(type_path)
+        .ok_or_else(|| SceneError::Reflection(format!("Unknown component type `{type_path}`")))?;
+    let reflect_component = registration.data::<ReflectComponent>().ok_or_else(|| {
+        SceneError::Reflection(format!(
+            "Component `{type_path}` does not reflect ReflectComponent"
+        ))
+    })?;
+
+    let Some(reflected) = reflect_component.reflect(entity_ref) else {
+        return Ok(None);
+    };
+
+    let serializer = ReflectSerializer::new(reflected.as_partial_reflect(), &type_registry);
+    let Value::Object(obj) = serde_json::to_value(&serializer).map_err(|err| {
+        SceneError::Reflection(format!("Failed to serialize `{type_path}`: {err}"))
+    })?
+    else {
+        return Err(SceneError::Reflection(format!(
+            "Serialized `{type_path}` was not a JSON map"
+        )));
+    };
+
+    let inner = obj.into_values().next().ok_or_else(|| {
+        SceneError::Reflection(format!("Serialized `{type_path}` map was empty"))
+    })?;
+    Ok(Some(inner))
+}
+
+/// Writes (inserts or overwrites) a single reflected component on `entity` from BRP-compatible JSON.
+pub fn write_reflected_component_json(
+    world: &mut World,
+    entity: Entity,
+    type_path: &str,
+    value: &Value,
+) -> Result<(), SceneError> {
+    if world.get_entity(entity).is_err() {
+        return Err(SceneError::Reflection(format!(
+            "Entity {entity:?} does not exist"
+        )));
+    }
+    let type_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry_guard = type_registry.read();
+    let registration = registry_guard
+        .get_with_type_path(type_path)
+        .ok_or_else(|| SceneError::Reflection(format!("Unknown component type `{type_path}`")))?;
+    let reflect_component = registration.data::<ReflectComponent>().ok_or_else(|| {
+        SceneError::Reflection(format!(
+            "Component `{type_path}` does not reflect ReflectComponent"
+        ))
+    })?;
+
+    let reflected: Box<dyn PartialReflect> =
+        TypedReflectDeserializer::new(registration, &registry_guard)
+            .deserialize(value)
+            .map_err(|err| {
+                SceneError::Reflection(format!("Failed to deserialize `{type_path}`: {err}"))
+            })?;
+
+    let mut entity_mut = world.entity_mut(entity);
+    reflect_component.insert(&mut entity_mut, reflected.as_partial_reflect(), &registry_guard);
+    Ok(())
+}
+
+/// Removes a single reflected component by `type_path` from `entity`.
+pub fn remove_reflected_component(
+    world: &mut World,
+    entity: Entity,
+    type_path: &str,
+) -> Result<(), SceneError> {
+    if world.get_entity(entity).is_err() {
+        return Err(SceneError::Reflection(format!(
+            "Entity {entity:?} does not exist"
+        )));
+    }
+    let type_registry = world.resource::<AppTypeRegistry>().clone();
+    let registry_guard = type_registry.read();
+    let registration = registry_guard
+        .get_with_type_path(type_path)
+        .ok_or_else(|| SceneError::Reflection(format!("Unknown component type `{type_path}`")))?;
+    let reflect_component = registration.data::<ReflectComponent>().ok_or_else(|| {
+        SceneError::Reflection(format!(
+            "Component `{type_path}` does not reflect ReflectComponent"
+        ))
+    })?;
+
+    let mut entity_mut = world.entity_mut(entity);
+    reflect_component.remove(&mut entity_mut);
+    Ok(())
 }
 
 fn restore_hierarchy_children(world: &mut World, spawned_entities: &[Entity]) {

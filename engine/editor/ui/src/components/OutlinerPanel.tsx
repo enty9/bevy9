@@ -25,7 +25,7 @@ interface OutlinerPanelProps {
   onSpawnPreset: (preset: EntityPresetKind, parentGuid: string | null) => void;
   onRename: (node: SceneTreeNode, newName: string) => void;
   onDelete: (node: SceneTreeNode) => void;
-  onReparent: (entityBits: number, parentBits: number | null) => void;
+  onReparent: (guid: string, parentGuid: string | null) => void;
   onCollapse: () => void;
 }
 
@@ -256,7 +256,7 @@ export function OutlinerPanel({
           onDrop={(e) => {
             e.preventDefault();
             if (draggedNode && canDropOnNode(node)) {
-              onReparent(draggedNode.entityBits, node.entity_bits);
+              onReparent(draggedNode.guid, node.guid);
             }
             setDraggedNode(null);
             setDragOverGuid(null);
@@ -481,7 +481,7 @@ export function OutlinerPanel({
           onDrop={(e) => {
             e.preventDefault();
             if (draggedNode) {
-              onReparent(draggedNode.entityBits, null);
+              onReparent(draggedNode.guid, null);
             }
             setDraggedNode(null);
             setDragOverGuid(null);

@@ -15,9 +15,12 @@ pub mod prelude {
         },
         presets::{default_preset_name, spawn_preset},
         serialization::{
-            build_scene_tree, clear_scene_entities, load_level_from_file, load_level_from_str,
-            reset_to_new_scene, save_level_to_file, save_level_to_string, LevelMetadata,
-            SceneError, SceneSerializationFilter, CURRENT_LEVEL_VERSION,
+            build_scene_tree, clear_scene_entities, collect_subtree_entities, despawn_subtree,
+            load_level_from_file, load_level_from_str, read_reflected_component_json,
+            remove_reflected_component, reset_to_new_scene, respawn_subtree_from_snapshot,
+            save_level_to_file, save_level_to_string, snapshot_subtree,
+            write_reflected_component_json, LevelMetadata, SceneError, SceneSerializationFilter,
+            SubtreeSnapshot, CURRENT_LEVEL_VERSION,
         },
         EngineScenePlugin,
     };

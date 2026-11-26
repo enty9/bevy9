@@ -11,14 +11,19 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub mod prelude {
     pub use crate::{
         ipc::{
-            ClientIpcMessage, EditorLogEntry, FrameMetrics, LogLevel, SceneTreeNode,
-            ServerIpcMessage,
+            ClientIpcMessage, EditorLogEntry, FrameMetrics, HistoryStatePayload, LogLevel,
+            SceneTreeNode, ServerIpcMessage,
         },
         rpc::{
-            EntityPresetKind, SceneLoadParams, SceneNewParams, SceneOperationResult,
-            SceneSaveParams, SetViewportModeParams, SetViewportModeResult, SpawnPresetParams,
-            SpawnPresetResult, WorldTreeResult, METHOD_ENTITY_SPAWN_PRESET, METHOD_SCENE_LOAD,
-            METHOD_SCENE_NEW, METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
+            AddComponentParams, ComponentMutationResult, DeleteEntityParams, DeleteEntityResult,
+            EntityPresetKind, HistoryStepResult, RemoveComponentParams, ReparentEntityParams,
+            ReparentEntityResult, SceneLoadParams, SceneNewParams, SceneOperationResult,
+            SceneSaveParams, SetComponentParams, SetViewportModeParams, SetViewportModeResult,
+            SpawnPresetParams, SpawnPresetResult, WorldTreeResult, METHOD_COMPONENT_ADD,
+            METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE,
+            METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO,
+            METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_SCENE_LOAD, METHOD_SCENE_NEW,
+            METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
         },
         viewport::{
             decode_viewport_frame, encode_viewport_frame, GizmoMode, GizmoSnapConfig, GizmoSpace,
@@ -185,6 +190,16 @@ mod tests {
                 snap: GizmoSnapConfig::default(),
             },
             ServerIpcMessage::InspectorRefresh { guids: vec![guid] },
+            ServerIpcMessage::HistoryStateChanged {
+                state: HistoryStatePayload {
+                    can_undo: true,
+                    can_redo: false,
+                    undo_label: Some("Move Entity".to_owned()),
+                    redo_label: None,
+                    undo_len: 1,
+                    redo_len: 0,
+                },
+            },
             ServerIpcMessage::Log {
                 entry: EditorLogEntry {
                     level: LogLevel::Info,
@@ -234,6 +249,35 @@ mod tests {
         let tree_back: WorldTreeResult =
             serde_json::from_str(&tree_json).expect("tree result should deserialize");
         assert_eq!(tree_back, tree_res);
+
+        let set_comp = SetComponentParams {
+            guid,
+            type_path: "bevy_ecs::name::Name".to_owned(),
+            value: serde_json::json!("Renamed"),
+            merge_key: Some("merge-1".to_owned()),
+            label: Some("Rename Entity".to_owned()),
+        };
+        let set_json = serde_json::to_string(&set_comp).expect("set params should serialize");
+        let set_back: SetComponentParams =
+            serde_json::from_str(&set_json).expect("set params should deserialize");
+        assert_eq!(set_back, set_comp);
+
+        let step_res = HistoryStepResult {
+            applied: true,
+            label: Some("Rename Entity".to_owned()),
+            state: HistoryStatePayload {
+                can_undo: false,
+                can_redo: true,
+                undo_label: None,
+                redo_label: Some("Rename Entity".to_owned()),
+                undo_len: 0,
+                redo_len: 1,
+            },
+        };
+        let step_json = serde_json::to_string(&step_res).expect("history result should serialize");
+        let step_back: HistoryStepResult =
+            serde_json::from_str(&step_json).expect("history result should deserialize");
+        assert_eq!(step_back, step_res);
 
         assert_eq!(
             serde_json::to_string(&ViewportCameraMode::Mode3D).unwrap(),

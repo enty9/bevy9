@@ -4,13 +4,20 @@ import {
   FolderOpen,
   LayoutGrid,
   Play,
+  Redo2,
   RotateCw,
   Save,
   SaveAll,
+  Undo2,
 } from "lucide-react";
 import type { EngineHostStatus, ProjectSummary } from "../lib/tauriBridge";
 import type { IpcConnectionState } from "../protocol/ipcClient";
-import type { FrameMetrics, ViewportCameraMode, WorldMode } from "../protocol/types";
+import type {
+  FrameMetrics,
+  HistoryStatePayload,
+  ViewportCameraMode,
+  WorldMode,
+} from "../protocol/types";
 
 interface ToolbarProps {
   samples: ProjectSummary[];
@@ -20,6 +27,7 @@ interface ToolbarProps {
   sceneName: string;
   sceneDirty: boolean;
   cameraMode: ViewportCameraMode;
+  historyState: HistoryStatePayload;
   metrics: FrameMetrics;
   busy: boolean;
   onSelectProject: (projectDir: string) => void;
@@ -28,6 +36,8 @@ interface ToolbarProps {
   onOpenScene: (explicitPath?: string) => void;
   onSaveScene: () => void;
   onSaveSceneAs: () => void;
+  onUndo: () => void;
+  onRedo: () => void;
   onSetCameraMode: (mode: ViewportCameraMode) => void;
   onStartHost: () => void;
   onRestartHost: () => void;
@@ -42,6 +52,7 @@ export function Toolbar({
   sceneName,
   sceneDirty,
   cameraMode,
+  historyState,
   metrics,
   busy,
   onSelectProject,
@@ -50,6 +61,8 @@ export function Toolbar({
   onOpenScene,
   onSaveScene,
   onSaveSceneAs,
+  onUndo,
+  onRedo,
   onSetCameraMode,
   onStartHost,
   onRestartHost,
@@ -215,6 +228,36 @@ export function Toolbar({
         >
           <SaveAll size={14} />
           Save As
+        </button>
+
+        <div className="toolbar-divider" />
+
+        <button
+          type="button"
+          disabled={busy || !hostRunning || !historyState.can_undo}
+          title={
+            historyState.undo_label
+              ? `Undo: ${historyState.undo_label} (Ctrl+Z)`
+              : "Undo (Ctrl+Z)"
+          }
+          onClick={onUndo}
+        >
+          <Undo2 size={14} />
+          Undo
+        </button>
+
+        <button
+          type="button"
+          disabled={busy || !hostRunning || !historyState.can_redo}
+          title={
+            historyState.redo_label
+              ? `Redo: ${historyState.redo_label} (Ctrl+Y)`
+              : "Redo (Ctrl+Shift+Z / Ctrl+Y)"
+          }
+          onClick={onRedo}
+        >
+          <Redo2 size={14} />
+          Redo
         </button>
       </div>
 

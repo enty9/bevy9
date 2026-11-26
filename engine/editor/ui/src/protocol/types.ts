@@ -158,6 +158,21 @@ export interface ViewportStatePayload {
   height: number;
 }
 
+export interface HistoryStatePayload {
+  can_undo: boolean;
+  can_redo: boolean;
+  undo_label: string | null;
+  redo_label: string | null;
+  undo_len: number;
+  redo_len: number;
+}
+
+export interface HistoryStepResult {
+  applied: boolean;
+  label: string | null;
+  state: HistoryStatePayload;
+}
+
 export type ServerIpcMessage =
   | ({ type: "welcome" } & WelcomePayload)
   | { type: "hierarchy_snapshot"; roots: SceneTreeNode[] }
@@ -165,6 +180,7 @@ export type ServerIpcMessage =
   | ({ type: "viewport_state_changed" } & ViewportStatePayload)
   | ({ type: "gizmo_state_changed" } & GizmoStatePayload)
   | { type: "inspector_refresh"; guids: string[] }
+  | { type: "history_state_changed"; state: HistoryStatePayload }
   | { type: "log"; entry: EditorLogEntry }
   | { type: "metrics"; metrics: FrameMetrics }
   | { type: "pong"; nonce: number }
@@ -227,6 +243,20 @@ export interface SpawnPresetResult {
 
 export interface SetViewportModeResult {
   mode: ViewportMode;
+}
+
+export interface DeleteEntityResult {
+  deleted_guids: string[];
+}
+
+export interface ReparentEntityResult {
+  guid: string;
+  parent_guid: string | null;
+}
+
+export interface ComponentMutationResult {
+  guid: string;
+  type_path: string;
 }
 
 export interface BrpSchemaRef {

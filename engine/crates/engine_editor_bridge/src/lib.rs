@@ -2,6 +2,7 @@
 
 pub mod brp;
 pub mod config;
+pub mod history;
 pub mod ipc_server;
 pub mod picking;
 pub mod selection;
@@ -10,6 +11,7 @@ pub mod selection;
 pub mod prelude {
     pub use crate::{
         config::{EditorBridgeConfig, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT},
+        history::EditorHistory,
         ipc_server::EditorIpcServer,
         picking::EditorHoveredEntity,
         selection::EditorSelection,
@@ -39,6 +41,7 @@ impl Plugin for EditorBridgePlugin {
 
         app.init_resource::<EditorSelection>()
             .init_resource::<EditorHoveredEntity>()
+            .init_resource::<EditorHistory>()
             .init_resource::<selection::BridgeDirtyFlags>()
             .init_resource::<ipc_server::LastBroadcastViewport>()
             .init_resource::<ipc_server::MetricsPublishState>();
@@ -81,6 +84,8 @@ impl Plugin for EditorBridgePlugin {
             (
                 picking::update_transform_gizmos_system
                     .before(engine_render::EditorCameraSystems),
+                history::capture_gizmo_commits_system,
+                history::handle_native_history_shortcuts_system,
                 picking::handle_viewport_selection_picking,
                 picking::draw_editor_helper_icons_and_selection
                     .run_if(resource_exists::<GizmoStorage<EditorOverlayGizmoGroup, ()>>),

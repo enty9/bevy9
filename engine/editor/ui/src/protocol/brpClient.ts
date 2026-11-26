@@ -1,6 +1,11 @@
 import type {
   BrpGetComponentsResponse,
   BrpRegistrySchema,
+  ComponentMutationResult,
+  DeleteEntityResult,
+  HistoryStatePayload,
+  HistoryStepResult,
+  ReparentEntityResult,
   SceneLoadParams,
   SceneNewParams,
   SceneOperationResult,
@@ -129,6 +134,70 @@ export class BrpClient {
     return this.call<null>("world.reparent_entities", {
       entities,
       parent,
+    });
+  }
+
+  undo(): Promise<HistoryStepResult> {
+    return this.call<HistoryStepResult>("engine.history.undo");
+  }
+
+  redo(): Promise<HistoryStepResult> {
+    return this.call<HistoryStepResult>("engine.history.redo");
+  }
+
+  getHistoryState(): Promise<HistoryStatePayload> {
+    return this.call<HistoryStatePayload>("engine.history.state");
+  }
+
+  deleteEntity(guid: string): Promise<DeleteEntityResult> {
+    return this.call<DeleteEntityResult>("engine.entity.delete", { guid });
+  }
+
+  reparentEntity(
+    guid: string,
+    parentGuid: string | null,
+  ): Promise<ReparentEntityResult> {
+    return this.call<ReparentEntityResult>("engine.entity.reparent", {
+      guid,
+      parent_guid: parentGuid,
+    });
+  }
+
+  setComponent(
+    guid: string,
+    typePath: string,
+    value: unknown,
+    mergeKey?: string,
+    label?: string,
+  ): Promise<ComponentMutationResult> {
+    return this.call<ComponentMutationResult>("engine.component.set", {
+      guid,
+      type_path: typePath,
+      value,
+      merge_key: mergeKey ?? null,
+      label: label ?? null,
+    });
+  }
+
+  addComponent(
+    guid: string,
+    typePath: string,
+    value: unknown,
+  ): Promise<ComponentMutationResult> {
+    return this.call<ComponentMutationResult>("engine.component.add", {
+      guid,
+      type_path: typePath,
+      value,
+    });
+  }
+
+  removeComponent(
+    guid: string,
+    typePath: string,
+  ): Promise<ComponentMutationResult> {
+    return this.call<ComponentMutationResult>("engine.component.remove", {
+      guid,
+      type_path: typePath,
     });
   }
 }

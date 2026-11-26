@@ -32,6 +32,7 @@ import type {
   EntityPresetKind,
   FrameMetrics,
   GizmoStatePayload,
+  HistoryStatePayload,
   SceneTreeNode,
   ViewportCameraMode,
   ViewportInputEvent,
@@ -77,6 +78,15 @@ const DEFAULT_GIZMO_STATE: GizmoStatePayload = {
   },
 };
 
+const DEFAULT_HISTORY_STATE: HistoryStatePayload = {
+  can_undo: false,
+  can_redo: false,
+  undo_label: null,
+  redo_label: null,
+  undo_len: 0,
+  redo_len: 0,
+};
+
 function findNodeByGuid(
   nodes: SceneTreeNode[],
   guid: string,
@@ -110,6 +120,9 @@ export function App() {
   );
   const [gizmoState, setGizmoState] = useState<GizmoStatePayload>(
     DEFAULT_GIZMO_STATE,
+  );
+  const [historyState, setHistoryState] = useState<HistoryStatePayload>(
+    DEFAULT_HISTORY_STATE,
   );
   const [inspectorRevision, setInspectorRevision] = useState(0);
   const [metrics, setMetrics] = useState<FrameMetrics>(DEFAULT_METRICS);
@@ -282,6 +295,7 @@ export function App() {
       ipcClient.onSelection(setSelection),
       ipcClient.onViewportState(setViewportState),
       ipcClient.onGizmoState(setGizmoState),
+      ipcClient.onHistoryState(setHistoryState),
       ipcClient.onInspectorRefresh(() => {
         setSceneDirty(true);
         setInspectorRevision((rev) => rev + 1);
@@ -531,11 +545,13 @@ export function App() {
       }
       setBannerError(null);
       try {
-        await brpClient.insertComponents(node.entity_bits, {
-          "bevy_camera::visibility::Visibility": node.visible
-            ? "Hidden"
-            : "Inherited",
-        });
+        await brpClient.setComponent(
+          node.guid,
+          "bevy_camera::visibility::Visibility",
+          node.visible ? "Hidden" : "Inherited",
+          undefined,
+          node.visible ? "Hide Entity" : "Show Entity",
+        );
         setSceneDirty(true);
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
@@ -576,9 +592,13 @@ export function App() {
       }
       setBannerError(null);
       try {
-        await brpClient.insertComponents(node.entity_bits, {
-          "bevy_ecs::name::Name": newName,
-        });
+        await brpClient.setComponent(
+          node.guid,
+          "bevy_ecs::name::Name",
+          newName,
+          undefined,
+          "Rename Entity",
+        );
         setSceneDirty(true);
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
@@ -596,8 +616,9 @@ export function App() {
       }
       setBannerError(null);
       try {
-        await brpClient.despawnEntity(node.entity_bits);
-        const nextSelection = selection.filter((g) => g !== node.guid);
+        const deleted = await brpClient.deleteEntity(node.guid);
+        const deletedSet = new Set(deleted.deleted_guids);
+        const nextSelection = selection.filter((g) => !deletedSet.has(g));
         setSelection(nextSelection);
         ipcClient?.selectEntities(nextSelection);
         setSceneDirty(true);
@@ -611,13 +632,13 @@ export function App() {
   );
 
   const handleReparentEntity = useCallback(
-    async (entityBits: number, parentBits: number | null) => {
+    async (guid: string, parentGuid: string | null) => {
       if (!brpClient) {
         return;
       }
       setBannerError(null);
       try {
-        await brpClient.reparentEntities([entityBits], parentBits);
+        await brpClient.reparentEntity(guid, parentGuid);
         setSceneDirty(true);
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
@@ -627,6 +648,44 @@ export function App() {
     },
     [brpClient],
   );
+
+  const handleUndo = useCallback(async () => {
+    if (!brpClient) {
+      return;
+    }
+    setBannerError(null);
+    try {
+      const res = await brpClient.undo();
+      setHistoryState(res.state);
+      if (res.applied) {
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+        setInspectorRevision((rev) => rev + 1);
+      }
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    }
+  }, [brpClient]);
+
+  const handleRedo = useCallback(async () => {
+    if (!brpClient) {
+      return;
+    }
+    setBannerError(null);
+    try {
+      const res = await brpClient.redo();
+      setHistoryState(res.state);
+      if (res.applied) {
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+        setInspectorRevision((rev) => rev + 1);
+      }
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    }
+  }, [brpClient]);
 
   const handleRestartHost = useCallback(async () => {
     setBusy(true);
@@ -643,12 +702,6 @@ export function App() {
 
   useEffect(() => {
     function onWindowKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
-        event.preventDefault();
-        void handleSaveScene();
-        return;
-      }
-
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       const isTextInput =
@@ -656,6 +709,30 @@ export function App() {
         tag === "TEXTAREA" ||
         tag === "SELECT" ||
         target?.isContentEditable === true;
+
+      if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
+        event.preventDefault();
+        void handleSaveScene();
+        return;
+      }
+
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !isTextInput) {
+        if (event.code === "KeyZ") {
+          event.preventDefault();
+          if (event.shiftKey) {
+            void handleRedo();
+          } else {
+            void handleUndo();
+          }
+          return;
+        }
+        if (event.code === "KeyY") {
+          event.preventDefault();
+          void handleRedo();
+          return;
+        }
+      }
+
       if (
         isTextInput ||
         tag === "CANVAS" ||
@@ -683,7 +760,13 @@ export function App() {
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleSaveScene, handleChangeGizmoState, gizmoState]);
+  }, [
+    handleSaveScene,
+    handleUndo,
+    handleRedo,
+    handleChangeGizmoState,
+    gizmoState,
+  ]);
 
   const selectedNode = useMemo(
     () =>
@@ -716,6 +799,7 @@ export function App() {
         sceneName={sceneName}
         sceneDirty={sceneDirty}
         cameraMode={viewportState.camera_mode}
+        historyState={historyState}
         metrics={metrics}
         busy={busy}
         onSelectProject={(dir) => void handleStartForProject(dir)}
@@ -724,6 +808,8 @@ export function App() {
         onOpenScene={(path) => void handleOpenScene(path)}
         onSaveScene={() => void handleSaveScene()}
         onSaveSceneAs={() => void handleSaveSceneAs()}
+        onUndo={() => void handleUndo()}
+        onRedo={() => void handleRedo()}
         onSetCameraMode={handleSetCameraMode}
         onStartHost={() =>
           activeProject && void handleStartForProject(activeProject.root_dir)
@@ -760,8 +846,8 @@ export function App() {
             }
             onRename={(node, newName) => void handleRenameEntity(node, newName)}
             onDelete={(node) => void handleDeleteEntity(node)}
-            onReparent={(entityBits, parentBits) =>
-              void handleReparentEntity(entityBits, parentBits)
+            onReparent={(guid, parentGuid) =>
+              void handleReparentEntity(guid, parentGuid)
             }
             onCollapse={() => updateLayout({ ...layout, leftCollapsed: true })}
           />

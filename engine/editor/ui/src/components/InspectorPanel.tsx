@@ -59,9 +59,10 @@ export function InspectorPanel({
       string,
       {
         timerId: number;
-        entityBits: number;
+        guid: string;
         typePath: string;
         value: unknown;
+        label: string;
         refreshTree: boolean;
       }
     >
@@ -72,9 +73,13 @@ export function InspectorPanel({
       window.clearTimeout(entry.timerId);
       pendingTimersRef.current.delete(key);
       if (brpClient) {
-        void brpClient.insertComponents(entry.entityBits, {
-          [entry.typePath]: entry.value,
-        });
+        void brpClient.setComponent(
+          entry.guid,
+          entry.typePath,
+          entry.value,
+          `${entry.guid}:${entry.typePath}`,
+          entry.label,
+        );
       }
     }
   }, [brpClient]);
@@ -83,7 +88,7 @@ export function InspectorPanel({
     return () => {
       flushPendingWrites();
     };
-  }, [flushPendingWrites, selectedNode?.entity_bits]);
+  }, [flushPendingWrites, selectedNode?.guid]);
 
   const visibleComponentPaths = useMemo(() => {
     if (!selectedNode) {
@@ -209,7 +214,10 @@ export function InspectorPanel({
       return;
     }
 
-    const entityBits = selectedNode.entity_bits;
+    const guid = selectedNode.guid;
+    const title = shortComponentName(typePath, registrySchema);
+    const mergeKey = `${guid}:${typePath}`;
+    const label = `Edit ${title}`;
     const refreshTree =
       typePath === "bevy_ecs::name::Name" ||
       typePath === "bevy_camera::visibility::Visibility";
@@ -219,18 +227,21 @@ export function InspectorPanel({
       [typePath]: nextValue,
     }));
 
-    const key = `${entityBits}:${typePath}`;
-    const existingPending = pendingTimersRef.current.get(key);
+    const existingPending = pendingTimersRef.current.get(mergeKey);
     if (existingPending) {
       window.clearTimeout(existingPending.timerId);
-      pendingTimersRef.current.delete(key);
+      pendingTimersRef.current.delete(mergeKey);
     }
 
     const executeWrite = async () => {
       try {
-        await brpClient.insertComponents(entityBits, {
-          [typePath]: nextValue,
-        });
+        await brpClient.setComponent(
+          guid,
+          typePath,
+          nextValue,
+          mergeKey,
+          label,
+        );
         onComponentChanged(refreshTree);
       } catch (err) {
         setErrorBanner(err instanceof Error ? err.message : String(err));
@@ -243,15 +254,16 @@ export function InspectorPanel({
     }
 
     const timerId = window.setTimeout(() => {
-      pendingTimersRef.current.delete(key);
+      pendingTimersRef.current.delete(mergeKey);
       void executeWrite();
     }, 90);
 
-    pendingTimersRef.current.set(key, {
+    pendingTimersRef.current.set(mergeKey, {
       timerId,
-      entityBits,
+      guid,
       typePath,
       value: nextValue,
+      label,
       refreshTree,
     });
   }
@@ -265,9 +277,7 @@ export function InspectorPanel({
     setErrorBanner(null);
     const defaultValue = buildDefaultValueForType(typePath, registrySchema);
     try {
-      await brpClient.insertComponents(selectedNode.entity_bits, {
-        [typePath]: defaultValue,
-      });
+      await brpClient.addComponent(selectedNode.guid, typePath, defaultValue);
       setComponentValues((prev) => ({
         ...prev,
         [typePath]: defaultValue,
@@ -284,7 +294,7 @@ export function InspectorPanel({
     }
     setErrorBanner(null);
     try {
-      await brpClient.removeComponents(selectedNode.entity_bits, [typePath]);
+      await brpClient.removeComponent(selectedNode.guid, typePath);
       onComponentChanged(true);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : String(err));
