@@ -3,6 +3,7 @@
 pub mod brp;
 pub mod config;
 pub mod ipc_server;
+pub mod picking;
 pub mod selection;
 
 /// Commonly used editor bridge types and constants.
@@ -10,14 +11,18 @@ pub mod prelude {
     pub use crate::{
         config::{EditorBridgeConfig, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT},
         ipc_server::EditorIpcServer,
+        picking::EditorHoveredEntity,
         selection::EditorSelection,
         EditorBridgePlugin,
     };
 }
 
-use bevy_app::{App, Plugin, Update};
+use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::schedule::{common_conditions::resource_exists, IntoScheduleConfigs};
+use bevy_gizmos::gizmos::GizmoStorage;
+use bevy_picking::{backend::ray::RayMap, PickingSystems};
 use engine_core::schedule::EngineSet;
+use engine_render::picking::EditorOverlayGizmoGroup;
 
 pub use prelude::*;
 
@@ -33,6 +38,7 @@ impl Plugin for EditorBridgePlugin {
         let config = app.world().resource::<EditorBridgeConfig>().clone();
 
         app.init_resource::<EditorSelection>()
+            .init_resource::<EditorHoveredEntity>()
             .init_resource::<selection::BridgeDirtyFlags>()
             .init_resource::<ipc_server::LastBroadcastViewport>()
             .init_resource::<ipc_server::MetricsPublishState>();
@@ -60,20 +66,26 @@ impl Plugin for EditorBridgePlugin {
         }
 
         app.add_systems(
-            Update,
-            ipc_server::process_ipc_inbound
-                .run_if(resource_exists::<EditorIpcServer>)
-                .after(EngineSet::Audio)
-                .before(EngineSet::EditorSync),
+            PreUpdate,
+            (
+                ipc_server::process_ipc_inbound
+                    .run_if(resource_exists::<EditorIpcServer>)
+                    .before(engine_render::picking::ViewportInputCaptureSet),
+                picking::helper_icon_picking_backend
+                    .run_if(resource_exists::<RayMap>)
+                    .in_set(PickingSystems::Backend),
+            ),
         )
         .add_systems(
             Update,
             (
+                picking::handle_viewport_selection_picking,
+                picking::draw_editor_helper_icons_and_selection
+                    .run_if(resource_exists::<GizmoStorage<EditorOverlayGizmoGroup, ()>>),
                 ipc_server::detect_scene_hierarchy_changes,
-                ipc_server::publish_ipc_updates,
+                ipc_server::publish_ipc_updates.run_if(resource_exists::<EditorIpcServer>),
             )
                 .chain()
-                .run_if(resource_exists::<EditorIpcServer>)
                 .in_set(EngineSet::EditorSync),
         );
     }

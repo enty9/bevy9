@@ -231,10 +231,13 @@ export function ViewportPanel({
     x: number;
     y: number;
   } {
-    const rect = event.currentTarget.getBoundingClientRect();
+    const canvas = event.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? canvas.width / rect.width : 1;
+    const scaleY = rect.height > 0 ? canvas.height / rect.height : 1;
     return {
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
+      x: (event.clientX - rect.left) * scaleX,
+      y: (event.clientY - rect.top) * scaleY,
     };
   }
 
@@ -412,8 +415,8 @@ export function ViewportPanel({
 
             <div className="viewport-overlay-legend">
               {cameraMode === "3d"
-                ? "3D: RMB Orbit + WASD/QE Fly · MMB/Alt+LMB Pan · Wheel Zoom"
-                : "2D: RMB/MMB Pan · Wheel Zoom"}
+                ? "3D: LMB Select · Ctrl/Shift Multi · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
+                : "2D: LMB Select · Ctrl/Shift Multi · RMB/MMB Pan · Wheel Zoom"}
             </div>
           </>
         ) : (

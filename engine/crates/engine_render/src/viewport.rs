@@ -227,9 +227,9 @@ pub fn create_offscreen_target_image(width: u32, height: u32) -> Image {
 
 pub(crate) fn process_viewport_resize_inputs(
     mut config: ResMut<ViewportConfig>,
-    queue: Res<ViewportInputQueue>,
+    frame_input: Res<crate::picking::ViewportFrameInput>,
 ) {
-    for event in queue.as_slice() {
+    for event in &frame_input.events {
         if let ViewportInputEvent::Resize { width, height, .. } = *event {
             let (clamped_w, clamped_h) = clamp_viewport_dimensions(width, height);
             if config.width != clamped_w || config.height != clamped_h {

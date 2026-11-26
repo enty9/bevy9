@@ -21,9 +21,13 @@ bevy_gizmos = { workspace = true }
 bevy_image = { workspace = true }
 bevy_input = { workspace = true }
 bevy_math = { workspace = true }
+bevy_picking = { workspace = true }
+bevy_reflect = { workspace = true }
 bevy_render = { workspace = true }
+bevy_shape = { workspace = true }
 bevy_time = { workspace = true }
 bevy_transform = { workspace = true }
 bevy_window = { workspace = true }
 crossbeam-channel = { workspace = true }
 tracing = { workspace = true }
+uuid = { workspace = true }

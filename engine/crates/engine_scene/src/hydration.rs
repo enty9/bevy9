@@ -92,13 +92,16 @@ pub(crate) fn hydrate_sprites(
     sprite_query: Query<(Entity, &SpriteDesc), Changed<SpriteDesc>>,
 ) {
     for (entity, desc) in &sprite_query {
-        commands.entity(entity).insert(Sprite {
-            color: desc.color,
-            custom_size: desc.custom_size,
-            flip_x: desc.flip_x,
-            flip_y: desc.flip_y,
-            ..Default::default()
-        });
+        commands.entity(entity).insert((
+            Sprite {
+                color: desc.color,
+                custom_size: desc.custom_size,
+                flip_x: desc.flip_x,
+                flip_y: desc.flip_y,
+                ..Default::default()
+            },
+            bevy_picking::Pickable::default(),
+        ));
     }
 }
 

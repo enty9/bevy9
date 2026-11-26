@@ -2,12 +2,17 @@
 
 pub mod camera;
 pub mod grid;
+pub mod picking;
 pub mod viewport;
 
 /// Commonly used editor render types.
 pub mod prelude {
     pub use crate::{
         camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
+        picking::{
+            EditorOverlayGizmoGroup, EditorPointerState, ViewportFrameInput,
+            ViewportInputCaptureSet, OFFSCREEN_POINTER_ID,
+        },
         viewport::{
             align_bytes_per_row, clamp_viewport_dimensions, create_offscreen_target_image,
             unpack_aligned_rgba8, DetachedViewportWindow, OffscreenRenderState, ViewportConfig,
@@ -17,15 +22,26 @@ pub mod prelude {
     };
 }
 
-use bevy_app::{App, Plugin, Startup, Update};
-use bevy_ecs::schedule::{common_conditions::resource_exists, IntoScheduleConfigs};
-use bevy_gizmos::config::GizmoConfigStore;
+use bevy_app::{App, Plugin, PreUpdate, Startup, Update};
+use bevy_ecs::{
+    message::Messages,
+    schedule::{common_conditions::resource_exists, IntoScheduleConfigs},
+};
+use bevy_gizmos::{
+    config::{GizmoConfig, GizmoConfigStore, GizmoLineConfig},
+    AppGizmoBuilder,
+};
+use bevy_picking::{
+    backend::ray::RayMap,
+    pointer::{PointerInput, PointerMap},
+    PickingSystems,
+};
 use engine_core::{schedule::EngineSet, WorldMode};
 use engine_protocol::ViewportCameraMode;
 
 pub use prelude::*;
 
-/// Plugin setting up 2D/3D editor cameras, reference grids, and `ViewportTransport`.
+/// Plugin setting up 2D/3D editor cameras, reference grids, picking input, and `ViewportTransport`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct EngineRenderPlugin;
 
@@ -42,11 +58,48 @@ impl Plugin for EngineRenderPlugin {
             });
         }
 
+        if app.world().contains_resource::<GizmoConfigStore>() {
+            app.insert_gizmo_config(
+                EditorOverlayGizmoGroup,
+                GizmoConfig {
+                    depth_bias: -1.0,
+                    line: GizmoLineConfig {
+                        width: 2.5,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
+
         app.init_resource::<EditorCameraState>()
             .init_resource::<ViewportFrameChannel>()
             .init_resource::<ViewportInputQueue>()
+            .init_resource::<ViewportFrameInput>()
+            .init_resource::<EditorPointerState>()
             .init_resource::<OffscreenRenderState>()
-            .add_systems(Startup, camera::spawn_editor_cameras)
+            .add_systems(
+                Startup,
+                (
+                    camera::spawn_editor_cameras,
+                    picking::spawn_offscreen_pointer.run_if(resource_exists::<PointerMap>),
+                ),
+            )
+            .add_systems(
+                PreUpdate,
+                (
+                    picking::capture_viewport_frame_input
+                        .in_set(ViewportInputCaptureSet)
+                        .before(PickingSystems::ProcessInput),
+                    picking::forward_offscreen_pointer_inputs
+                        .in_set(PickingSystems::ProcessInput)
+                        .before(PointerInput::receive)
+                        .run_if(resource_exists::<Messages<PointerInput>>),
+                    picking::populate_editor_picking_rays
+                        .in_set(PickingSystems::ProcessInput)
+                        .after(RayMap::repopulate),
+                ),
+            )
             .add_systems(
                 Update,
                 (

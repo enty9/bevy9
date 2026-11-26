@@ -22,7 +22,7 @@ use bevy_time::Time;
 use bevy_transform::components::Transform;
 use engine_protocol::{PointerButtonCode, ViewportCameraMode, ViewportInputEvent, ViewportMode};
 
-use crate::viewport::{ViewportConfig, ViewportInputQueue};
+use crate::{picking::ViewportFrameInput, viewport::ViewportConfig};
 
 /// Marker component for the editor's 3D perspective camera.
 #[derive(Component, Debug, Default, Clone, Copy)]
@@ -90,7 +90,7 @@ impl EditorCameraState {
     /// Computes the world [`Transform`] for the 2D editor camera.
     #[must_use]
     pub fn compute_2d_transform(&self) -> Transform {
-        Transform::from_xyz(self.center_2d.x, self.center_2d.y, 999.0)
+        Transform::from_xyz(self.center_2d.x, self.center_2d.y, 0.0)
     }
 
     /// Applies forwarded [`ViewportInputEvent`] records from the embedded UI `<canvas>`.
@@ -297,7 +297,7 @@ pub(crate) fn update_editor_cameras(
     config: Res<ViewportConfig>,
     time: Res<Time>,
     mut state: ResMut<EditorCameraState>,
-    mut input_queue: ResMut<ViewportInputQueue>,
+    frame_input: Res<ViewportFrameInput>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     key_codes: Option<Res<ButtonInput<KeyCode>>>,
     mut mouse_motion: MessageReader<MouseMotion>,
@@ -306,9 +306,8 @@ pub(crate) fn update_editor_cameras(
     mut cam2d_query: Query<(&mut Transform, &mut Projection), EditorCam2dFilter>,
 ) {
     let dt = time.delta_secs();
-    let queued = input_queue.drain_all();
-    if !queued.is_empty() {
-        state.apply_forwarded_events(&queued, config.camera_mode, dt);
+    if !frame_input.events.is_empty() {
+        state.apply_forwarded_events(&frame_input.events, config.camera_mode, dt);
     }
 
     if config.mode == ViewportMode::NativeWindow {

@@ -290,7 +290,15 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
                 ipc_port: cli.ipc_port,
                 ..Default::default()
             });
-            app.add_plugins((EngineRenderPlugin, EditorBridgePlugin));
+            app.insert_resource(SpritePickingSettings {
+                picking_mode: SpritePickingMode::BoundingBox,
+                ..Default::default()
+            });
+            app.add_plugins((
+                MeshPickingPlugin,
+                EngineRenderPlugin,
+                EditorBridgePlugin,
+            ));
             app.add_systems(Startup, log_editor_host_boot);
         }
     }

@@ -38,6 +38,9 @@ const INTERNAL_RUNTIME_EXACT = new Set<string>([
   "bevy_light::point_light::PointLight",
   "bevy_light::cascade::CascadeShadowConfig",
   "bevy_light::cascade::Cascades",
+  "bevy_picking::Pickable",
+  "bevy_picking::hover::Hovered",
+  "bevy_picking::hover::PickingInteraction",
 ]);
 
 const COMPONENT_PRIORITY: Record<string, number> = {
