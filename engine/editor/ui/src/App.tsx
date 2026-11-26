@@ -13,8 +13,10 @@ import {
   isRunningInTauri,
   listSampleProjects,
   loadProjectMetadata,
+  pickOpenPrefabFile,
   pickOpenSceneFile,
   pickProjectFolder,
+  pickSavePrefabFile,
   pickSaveSceneFile,
   restartEngineHost,
   startEngineHost,
@@ -33,6 +35,7 @@ import type {
   FrameMetrics,
   GizmoStatePayload,
   HistoryStatePayload,
+  PrefabFileEntry,
   SceneTreeNode,
   ViewportCameraMode,
   ViewportInputEvent,
@@ -103,6 +106,24 @@ function findNodeByGuid(
   return null;
 }
 
+function findPrefabRootForGuid(
+  nodes: SceneTreeNode[],
+  guid: string,
+  nearestRoot: SceneTreeNode | null = null,
+): SceneTreeNode | null {
+  for (const node of nodes) {
+    const activeRoot = node.prefab_path ? node : nearestRoot;
+    if (node.guid === guid) {
+      return activeRoot;
+    }
+    const found = findPrefabRootForGuid(node.children, guid, activeRoot);
+    if (found !== undefined && found !== null) {
+      return found;
+    }
+  }
+  return null;
+}
+
 export type FrameSubscriber = (frame: DecodedViewportFrame) => void;
 
 export function App() {
@@ -114,6 +135,7 @@ export function App() {
 
   const [registrySchema, setRegistrySchema] = useState<BrpRegistrySchema | null>(null);
   const [hierarchy, setHierarchy] = useState<SceneTreeNode[]>([]);
+  const [prefabs, setPrefabs] = useState<PrefabFileEntry[]>([]);
   const [selection, setSelection] = useState<string[]>([]);
   const [viewportState, setViewportState] = useState<ViewportStatePayload>(
     DEFAULT_VIEWPORT_STATE,
@@ -346,15 +368,17 @@ export function App() {
         return;
       }
       try {
-        const [schema, tree] = await Promise.all([
+        const [schema, tree, prefabList] = await Promise.all([
           brpClient.getRegistrySchema(),
           brpClient.getWorldTree(),
+          brpClient.listPrefabs(),
         ]);
         if (cancelled) {
           return;
         }
         setRegistrySchema(schema);
         setHierarchy(tree.roots);
+        setPrefabs(prefabList.prefabs);
         setSceneName(tree.scene_name);
         setScenePath(tree.scene_path);
       } catch (err) {
@@ -687,6 +711,148 @@ export function App() {
     }
   }, [brpClient]);
 
+  const handleSaveAsPrefab = useCallback(
+    async (node: SceneTreeNode) => {
+      if (!brpClient) {
+        return;
+      }
+      const slug = node.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "_") || "entity";
+      const defaultPath = activeProject
+        ? `${activeProject.root_dir}/prefabs/${slug}.prefab.ron`
+        : `prefabs/${slug}.prefab.ron`;
+
+      let targetPath = isRunningInTauri()
+        ? await pickSavePrefabFile(defaultPath)
+        : window.prompt("Save prefab path (.prefab.ron):", defaultPath);
+      if (!targetPath) {
+        return;
+      }
+
+      setBannerError(null);
+      try {
+        await brpClient.savePrefab({
+          root_guid: node.guid,
+          path: targetPath,
+          name: node.name,
+        });
+        setSceneDirty(true);
+        const [tree, prefabList] = await Promise.all([
+          brpClient.getWorldTree(),
+          brpClient.listPrefabs(),
+        ]);
+        setHierarchy(tree.roots);
+        setPrefabs(prefabList.prefabs);
+        setInspectorRevision((rev) => rev + 1);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, activeProject],
+  );
+
+  const handleSpawnPrefab = useCallback(
+    async (path: string, parentGuid: string | null) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        const res = await brpClient.spawnPrefab({
+          path,
+          parent_guid: parentGuid,
+        });
+        setSelection([res.guid]);
+        ipcClient?.selectEntities([res.guid]);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, ipcClient],
+  );
+
+  const handleBrowseSpawnPrefab = useCallback(
+    async (parentGuid: string | null) => {
+      const defaultPath = activeProject?.root_dir;
+      const picked = isRunningInTauri()
+        ? await pickOpenPrefabFile(defaultPath)
+        : window.prompt(
+            "Open prefab path (.prefab.ron):",
+            "prefabs/crate.prefab.ron",
+          );
+      if (picked) {
+        await handleSpawnPrefab(picked, parentGuid);
+      }
+    },
+    [activeProject, handleSpawnPrefab],
+  );
+
+  const handleApplyPrefab = useCallback(
+    async (node: SceneTreeNode) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.applyPrefab(node.guid);
+        setSceneDirty(true);
+        const [tree, prefabList] = await Promise.all([
+          brpClient.getWorldTree(),
+          brpClient.listPrefabs(),
+        ]);
+        setHierarchy(tree.roots);
+        setPrefabs(prefabList.prefabs);
+        setInspectorRevision((rev) => rev + 1);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
+  const handleRevertPrefab = useCallback(
+    async (node: SceneTreeNode) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.revertPrefab(node.guid, null);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+        setInspectorRevision((rev) => rev + 1);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
+  const handleRevertPrefabComponent = useCallback(
+    async (node: SceneTreeNode, typePath: string) => {
+      if (!brpClient) {
+        return;
+      }
+      setBannerError(null);
+      try {
+        await brpClient.revertPrefab(node.guid, typePath);
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+        setInspectorRevision((rev) => rev + 1);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient],
+  );
+
   const handleRestartHost = useCallback(async () => {
     setBusy(true);
     setBannerError(null);
@@ -774,6 +940,14 @@ export function App() {
     [hierarchy, selection],
   );
 
+  const selectedPrefabRootNode = useMemo(
+    () =>
+      selectedNode?.is_prefab_member
+        ? findPrefabRootForGuid(hierarchy, selectedNode.guid)
+        : null,
+    [hierarchy, selectedNode],
+  );
+
   const handleComponentChanged = useCallback(
     async (refreshTree: boolean) => {
       setSceneDirty(true);
@@ -838,11 +1012,18 @@ export function App() {
           <OutlinerPanel
             roots={hierarchy}
             selectedGuids={selection}
+            prefabs={prefabs}
             connected={ipcState === "connected" || brpClient !== null}
             onSelect={handleSelectEntities}
             onToggleVisibility={(node) => void handleToggleVisibility(node)}
             onSpawnPreset={(preset, parentGuid) =>
               void handleSpawnPreset(preset, parentGuid)
+            }
+            onSpawnPrefab={(path, parentGuid) =>
+              void handleSpawnPrefab(path, parentGuid)
+            }
+            onBrowseSpawnPrefab={(parentGuid) =>
+              void handleBrowseSpawnPrefab(parentGuid)
             }
             onRename={(node, newName) => void handleRenameEntity(node, newName)}
             onDelete={(node) => void handleDeleteEntity(node)}
@@ -880,6 +1061,7 @@ export function App() {
         right={
           <InspectorPanel
             selectedNode={selectedNode}
+            prefabRootNode={selectedPrefabRootNode}
             selectedCount={selection.length}
             brpClient={brpClient}
             registrySchema={registrySchema}
@@ -888,6 +1070,12 @@ export function App() {
               void handleComponentChanged(refreshTree)
             }
             onDeleteEntity={(node) => void handleDeleteEntity(node)}
+            onSaveAsPrefab={(node) => void handleSaveAsPrefab(node)}
+            onApplyPrefab={(node) => void handleApplyPrefab(node)}
+            onRevertPrefab={(node) => void handleRevertPrefab(node)}
+            onRevertPrefabComponent={(node, typePath) =>
+              void handleRevertPrefabComponent(node, typePath)
+            }
             onCollapse={() => updateLayout({ ...layout, rightCollapsed: true })}
           />
         }

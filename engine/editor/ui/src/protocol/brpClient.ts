@@ -5,6 +5,13 @@ import type {
   DeleteEntityResult,
   HistoryStatePayload,
   HistoryStepResult,
+  PrefabApplyResult,
+  PrefabListResult,
+  PrefabRevertResult,
+  PrefabSaveParams,
+  PrefabSaveResult,
+  PrefabSpawnParams,
+  PrefabSpawnResult,
   ReparentEntityResult,
   SceneLoadParams,
   SceneNewParams,
@@ -199,5 +206,31 @@ export class BrpClient {
       guid,
       type_path: typePath,
     });
+  }
+
+  savePrefab(params: PrefabSaveParams): Promise<PrefabSaveResult> {
+    return this.call<PrefabSaveResult>("engine.prefab.save", params);
+  }
+
+  spawnPrefab(params: PrefabSpawnParams): Promise<PrefabSpawnResult> {
+    return this.call<PrefabSpawnResult>("engine.prefab.spawn", params);
+  }
+
+  applyPrefab(guid: string): Promise<PrefabApplyResult> {
+    return this.call<PrefabApplyResult>("engine.prefab.apply", { guid });
+  }
+
+  revertPrefab(
+    guid: string,
+    typePath?: string | null,
+  ): Promise<PrefabRevertResult> {
+    return this.call<PrefabRevertResult>("engine.prefab.revert", {
+      guid,
+      type_path: typePath ?? null,
+    });
+  }
+
+  listPrefabs(): Promise<PrefabListResult> {
+    return this.call<PrefabListResult>("engine.prefab.list");
   }
 }

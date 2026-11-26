@@ -51,6 +51,21 @@ pub const METHOD_COMPONENT_ADD: &str = "engine.component.add";
 /// BRP method name for transactionally removing a component from an entity.
 pub const METHOD_COMPONENT_REMOVE: &str = "engine.component.remove";
 
+/// BRP method name for saving a scene subtree as a reusable `.prefab.ron` asset.
+pub const METHOD_PREFAB_SAVE: &str = "engine.prefab.save";
+
+/// BRP method name for instantiating a `.prefab.ron` asset into the active scene.
+pub const METHOD_PREFAB_SPAWN: &str = "engine.prefab.spawn";
+
+/// BRP method name for applying local changes on a prefab instance back to its `.prefab.ron` asset and sibling instances.
+pub const METHOD_PREFAB_APPLY: &str = "engine.prefab.apply";
+
+/// BRP method name for reverting overrides on a prefab instance back to the `.prefab.ron` template.
+pub const METHOD_PREFAB_REVERT: &str = "engine.prefab.revert";
+
+/// BRP method name for listing `.prefab.ron` files discovered inside the active project.
+pub const METHOD_PREFAB_LIST: &str = "engine.prefab.list";
+
 /// Parameters for [`METHOD_SCENE_NEW`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SceneNewParams {
@@ -255,4 +270,106 @@ pub struct ComponentMutationResult {
     pub guid: EntityGuid,
     /// Component type path that was mutated.
     pub type_path: String,
+}
+
+/// Parameters for [`METHOD_PREFAB_SAVE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabSaveParams {
+    /// Persistent [`EntityGuid`] of the scene entity subtree root to export.
+    pub root_guid: EntityGuid,
+    /// Target `.prefab.ron` path (relative to the project root or absolute).
+    pub path: String,
+    /// Optional human-readable name header stored in the `.prefab.ron` file.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// Response returned by [`METHOD_PREFAB_SAVE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabSaveResult {
+    /// Normalized prefab path assigned on the linked `PrefabInstance` component.
+    pub prefab_path: String,
+    /// Template root [`EntityGuid`] recorded inside the `.prefab.ron` asset.
+    pub root_source_guid: EntityGuid,
+    /// Total number of entities serialized into the prefab subtree.
+    pub entity_count: usize,
+}
+
+/// Parameters for [`METHOD_PREFAB_SPAWN`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrefabSpawnParams {
+    /// Path to the `.prefab.ron` file (relative to project root or absolute).
+    pub path: String,
+    /// Optional parent [`EntityGuid`] to attach the spawned prefab instance under.
+    #[serde(default)]
+    pub parent_guid: Option<EntityGuid>,
+    /// Optional world/local spawn position `[x, y, z]`.
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+}
+
+/// Response returned by [`METHOD_PREFAB_SPAWN`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabSpawnResult {
+    /// Persistent [`EntityGuid`] assigned to the newly spawned prefab instance root.
+    pub guid: EntityGuid,
+    /// Ephemeral ECS [`bevy_ecs::entity::Entity::to_bits`] handle of the spawned root.
+    pub entity_bits: u64,
+    /// Display name of the spawned prefab root.
+    pub name: String,
+    /// Normalized `.prefab.ron` path stored in `PrefabInstance`.
+    pub prefab_path: String,
+}
+
+/// Parameters for [`METHOD_PREFAB_APPLY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabInstanceActionParams {
+    /// Persistent [`EntityGuid`] of the prefab root or any member entity in that instance.
+    pub guid: EntityGuid,
+}
+
+/// Response returned by [`METHOD_PREFAB_APPLY`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabApplyResult {
+    /// Normalized `.prefab.ron` path updated on disk.
+    pub prefab_path: String,
+    /// Persistent [`EntityGuid`]s across all scene entities updated by apply/propagation.
+    pub updated_guids: Vec<EntityGuid>,
+}
+
+/// Parameters for [`METHOD_PREFAB_REVERT`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabRevertParams {
+    /// Persistent [`EntityGuid`] of the prefab root or any member entity in that instance.
+    pub guid: EntityGuid,
+    /// Optional reflected component type path to revert exclusively on `guid`; if omitted, reverts the whole instance.
+    #[serde(default)]
+    pub type_path: Option<String>,
+}
+
+/// Response returned by [`METHOD_PREFAB_REVERT`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabRevertResult {
+    /// Normalized `.prefab.ron` path referenced by the reverted instance.
+    pub prefab_path: String,
+    /// Persistent [`EntityGuid`]s of entities whose components were reverted.
+    pub reverted_guids: Vec<EntityGuid>,
+}
+
+/// Metadata entry describing a `.prefab.ron` file discovered in the active project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabFileEntry {
+    /// Display filename stem without `.prefab.ron`.
+    pub name: String,
+    /// Path relative to the project root with `/` separators.
+    pub relative_path: String,
+    /// Resolved absolute path on disk.
+    pub absolute_path: String,
+}
+
+/// Response returned by [`METHOD_PREFAB_LIST`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefabListResult {
+    /// Sorted list of discovered project `.prefab.ron` assets.
+    pub prefabs: Vec<PrefabFileEntry>,
 }

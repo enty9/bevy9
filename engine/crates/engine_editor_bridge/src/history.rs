@@ -2,18 +2,20 @@
 
 use std::{
     collections::{HashSet, VecDeque},
+    path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use bevy_ecs::{entity::Entity, hierarchy::ChildOf, resource::Resource, world::World};
 use bevy_input::{keyboard::KeyCode, ButtonInput};
 use bevy_transform::components::Transform;
-use engine_core::{EntityGuid, EntityGuidMap};
+use engine_core::{EntityGuid, EntityGuidMap, ProjectPaths};
 use engine_protocol::{HistoryStatePayload, HistoryStepResult, ViewportMode};
 use engine_render::{gizmo::TransformGizmoState, ViewportConfig};
 use engine_scene::{
-    despawn_subtree, remove_reflected_component, respawn_subtree_from_snapshot,
-    write_reflected_component_json, ActiveScene, SubtreeSnapshot,
+    despawn_subtree, remove_reflected_component, resolve_prefab_instance_root,
+    respawn_subtree_from_snapshot, sync_prefab_instance_overrides, write_reflected_component_json,
+    ActiveScene, SubtreeSnapshot,
 };
 use serde_json::Value;
 
@@ -304,6 +306,42 @@ pub(crate) fn apply_reparent(
     Ok(())
 }
 
+/// Resolves `raw_path` relative to [`ProjectPaths::root_dir`] when relative and configured.
+#[must_use]
+pub(crate) fn resolve_project_path(world: &World, raw_path: &str) -> PathBuf {
+    let candidate = PathBuf::from(raw_path);
+    if candidate.is_relative()
+        && let Some(paths) = world.get_resource::<ProjectPaths>()
+    {
+        return paths.root_dir.join(candidate);
+    }
+    candidate
+}
+
+/// Recomputes `PrefabInstance::overrides` if `guid` belongs to a prefab subtree whose file exists.
+pub(crate) fn sync_entity_prefab_overrides_if_member(world: &mut World, guid: EntityGuid) {
+    let Some(entity) = world
+        .get_resource::<EntityGuidMap>()
+        .and_then(|map| map.get_entity(guid))
+    else {
+        return;
+    };
+    let Some((instance_root, prefab_path)) = resolve_prefab_instance_root(world, entity) else {
+        return;
+    };
+    let abs_path = resolve_project_path(world, &prefab_path);
+    if !abs_path.exists() {
+        return;
+    }
+    let root_guid = world.get::<EntityGuid>(instance_root).copied();
+    if let Ok(true) = sync_prefab_instance_overrides(world, instance_root, &abs_path)
+        && let Some(r_guid) = root_guid
+        && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
+    {
+        history.queue_inspector_refresh(&[r_guid]);
+    }
+}
+
 fn resolve_entity_by_guid(world: &World, guid: EntityGuid) -> Result<Entity, String> {
     let entity = world
         .get_resource::<EntityGuidMap>()
@@ -397,6 +435,10 @@ fn finalize_history_step(
     push_to_redo: bool,
     effect: CommandEffect,
 ) -> HistoryStatePayload {
+    for &guid in &effect.refresh_guids {
+        sync_entity_prefab_overrides_if_member(world, guid);
+    }
+
     if let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>() {
         active_scene.dirty = true;
     }
@@ -613,6 +655,7 @@ pub(crate) fn capture_gizmo_commits_system(world: &mut World) {
 
     let now_ms = now_epoch_ms();
     let mut any_changed = false;
+    let mut moved_guids = Vec::new();
     for commit in commits {
         if commit.entries.is_empty() {
             continue;
@@ -631,10 +674,15 @@ pub(crate) fn capture_gizmo_commits_system(world: &mut World) {
             format!("{verb} {count} Entities")
         };
 
-        let entries = commit
+        let entries: Vec<TransformChangeEntry> = commit
             .entries
             .into_iter()
-            .map(|(guid, before, after)| TransformChangeEntry { guid, before, after })
+            .map(|(guid, before, after)| {
+                if !moved_guids.contains(&guid) {
+                    moved_guids.push(guid);
+                }
+                TransformChangeEntry { guid, before, after }
+            })
             .collect();
 
         if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
@@ -644,6 +692,10 @@ pub(crate) fn capture_gizmo_commits_system(world: &mut World) {
                 now_ms,
             );
         }
+    }
+
+    for guid in moved_guids {
+        sync_entity_prefab_overrides_if_member(world, guid);
     }
 
     if any_changed && let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>() {

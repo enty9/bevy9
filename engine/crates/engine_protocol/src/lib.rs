@@ -16,14 +16,18 @@ pub mod prelude {
         },
         rpc::{
             AddComponentParams, ComponentMutationResult, DeleteEntityParams, DeleteEntityResult,
-            EntityPresetKind, HistoryStepResult, RemoveComponentParams, ReparentEntityParams,
-            ReparentEntityResult, SceneLoadParams, SceneNewParams, SceneOperationResult,
-            SceneSaveParams, SetComponentParams, SetViewportModeParams, SetViewportModeResult,
-            SpawnPresetParams, SpawnPresetResult, WorldTreeResult, METHOD_COMPONENT_ADD,
-            METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE,
-            METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO,
-            METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_SCENE_LOAD, METHOD_SCENE_NEW,
-            METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
+            EntityPresetKind, HistoryStepResult, PrefabApplyResult, PrefabFileEntry,
+            PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams, PrefabRevertResult,
+            PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams, PrefabSpawnResult,
+            RemoveComponentParams, ReparentEntityParams, ReparentEntityResult, SceneLoadParams,
+            SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
+            SetViewportModeParams, SetViewportModeResult, SpawnPresetParams, SpawnPresetResult,
+            WorldTreeResult, METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET,
+            METHOD_ENTITY_DELETE, METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET,
+            METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_PREFAB_APPLY,
+            METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE, METHOD_PREFAB_SPAWN,
+            METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE,
+            METHOD_WORLD_TREE,
         },
         viewport::{
             decode_viewport_frame, encode_viewport_frame, GizmoMode, GizmoSnapConfig, GizmoSpace,
@@ -162,6 +166,8 @@ mod tests {
             visible: true,
             children: vec![],
             components: vec!["engine_scene::components::MeshPrimitive3d".to_owned()],
+            prefab_path: Some("prefabs/cube.prefab.ron".to_owned()),
+            is_prefab_member: true,
         };
 
         let server_msgs = [
@@ -278,6 +284,16 @@ mod tests {
         let step_back: HistoryStepResult =
             serde_json::from_str(&step_json).expect("history result should deserialize");
         assert_eq!(step_back, step_res);
+
+        let prefab_save = PrefabSaveParams {
+            root_guid: guid,
+            path: "prefabs/hero.prefab.ron".to_owned(),
+            name: Some("Hero".to_owned()),
+        };
+        let prefab_json = serde_json::to_string(&prefab_save).expect("prefab params should serialize");
+        let prefab_back: PrefabSaveParams =
+            serde_json::from_str(&prefab_json).expect("prefab params should deserialize");
+        assert_eq!(prefab_back, prefab_save);
 
         assert_eq!(
             serde_json::to_string(&ViewportCameraMode::Mode3D).unwrap(),

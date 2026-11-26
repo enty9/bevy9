@@ -58,6 +58,8 @@ export interface SceneTreeNode {
   visible: boolean;
   children: SceneTreeNode[];
   components: string[];
+  prefab_path?: string | null;
+  is_prefab_member?: boolean;
 }
 
 export type PointerButtonCode = "left" | "right" | "middle";
@@ -257,6 +259,62 @@ export interface ReparentEntityResult {
 export interface ComponentMutationResult {
   guid: string;
   type_path: string;
+}
+
+export interface PrefabInstanceData {
+  prefab_path: string;
+  root_source_guid: string;
+  overrides: Record<string, string>;
+}
+
+export interface PrefabMemberData {
+  instance_root_guid: string;
+  source_guid: string;
+}
+
+export interface PrefabSaveParams {
+  root_guid: string;
+  path: string;
+  name?: string | null;
+}
+
+export interface PrefabSaveResult {
+  prefab_path: string;
+  root_source_guid: string;
+  entity_count: number;
+}
+
+export interface PrefabSpawnParams {
+  path: string;
+  parent_guid?: string | null;
+  position?: [number, number, number] | null;
+}
+
+export interface PrefabSpawnResult {
+  guid: string;
+  entity_bits: number;
+  name: string;
+  prefab_path: string;
+}
+
+export interface PrefabApplyResult {
+  prefab_path: string;
+  updated_guids: string[];
+}
+
+export interface PrefabRevertResult {
+  prefab_path: string;
+  reverted_guids: string[];
+}
+
+export interface PrefabFileEntry {
+  name: string;
+  relative_path: string;
+  absolute_path: string;
+}
+
+export interface PrefabListResult {
+  prefabs: PrefabFileEntry[];
 }
 
 export interface BrpSchemaRef {

@@ -178,3 +178,28 @@ export async function pickSaveSceneFile(defaultPath?: string): Promise<string | 
   });
   return typeof selected === "string" ? selected : null;
 }
+
+export async function pickSavePrefabFile(defaultPath?: string): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const selected = await save({
+    defaultPath,
+    title: "Save Prefab (.prefab.ron)",
+    filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}
+
+export async function pickOpenPrefabFile(defaultPath?: string): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const selected = await open({
+    multiple: false,
+    defaultPath,
+    title: "Instantiate Prefab (.prefab.ron)",
+    filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
+  });
+  return typeof selected === "string" ? selected : null;
+}

@@ -81,6 +81,12 @@ pub struct SceneTreeNode {
     pub children: Vec<SceneTreeNode>,
     /// Fully-qualified reflected component type paths attached to this entity.
     pub components: Vec<String>,
+    /// Normalized `.prefab.ron` asset path if this entity is a `PrefabInstance` root.
+    #[serde(default)]
+    pub prefab_path: Option<String>,
+    /// Whether this entity belongs to a prefab instance subtree (root or child member).
+    #[serde(default)]
+    pub is_prefab_member: bool,
 }
 
 /// Messages sent from the editor UI/Tauri client to the Engine Host over WebSocket.

@@ -1007,3 +1007,63 @@ button.ghost-btn:hover:not(:disabled) {
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
 }
+
+.outliner-prefab .outliner-name {
+  color: #8cc4ff;
+}
+
+.prefab-banner {
+  background: rgba(61, 158, 245, 0.12);
+  border: 1px solid rgba(61, 158, 245, 0.35);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.prefab-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.prefab-banner-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a9d4ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prefab-banner-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.prefab-banner-actions button {
+  flex: 1;
+  justify-content: center;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.component-card.prefab-override {
+  border-color: rgba(61, 158, 245, 0.6);
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+}
+
+.override-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #a9d4ff;
+  background: rgba(61, 158, 245, 0.18);
+  border: 1px solid rgba(61, 158, 245, 0.4);
+}

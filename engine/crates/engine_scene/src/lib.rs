@@ -2,6 +2,7 @@
 
 pub mod components;
 pub mod hydration;
+pub mod prefab;
 pub mod presets;
 pub mod serialization;
 
@@ -12,6 +13,13 @@ pub mod prelude {
             ActiveScene, ColorMaterialDesc, MeshPrimitive2d, MeshPrimitive3d, SceneCamera2d,
             SceneCamera3d, SceneCameraActivationPolicy, SceneDirectionalLight, SceneEntity,
             ScenePointLight, SpriteDesc, StandardMaterialDesc,
+        },
+        prefab::{
+            apply_prefab_instance, ensure_prefab_extension, list_prefab_files,
+            normalize_prefab_path, prefab_component_override_key, prefab_field_override_key,
+            resolve_prefab_instance_root, revert_prefab_instance, save_prefab_to_file,
+            spawn_prefab_from_file, sync_prefab_instance_overrides, PrefabInstance, PrefabMember,
+            CURRENT_PREFAB_VERSION, PREFAB_COMPONENT_REMOVED,
         },
         presets::{default_preset_name, spawn_preset},
         serialization::{
@@ -72,6 +80,8 @@ impl Plugin for EngineScenePlugin {
             .register_type::<SceneCamera2d>()
             .register_type::<SceneDirectionalLight>()
             .register_type::<ScenePointLight>()
+            .register_type::<PrefabInstance>()
+            .register_type::<PrefabMember>()
             .register_type::<ActiveScene>()
             .register_type::<SceneCameraActivationPolicy>();
 
@@ -113,7 +123,9 @@ impl Plugin for EngineScenePlugin {
             .allow::<SceneCamera3d>()
             .allow::<SceneCamera2d>()
             .allow::<SceneDirectionalLight>()
-            .allow::<ScenePointLight>();
+            .allow::<ScenePointLight>()
+            .allow::<PrefabInstance>()
+            .allow::<PrefabMember>();
         app.insert_resource(filter);
 
         app.add_systems(

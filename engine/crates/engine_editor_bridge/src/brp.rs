@@ -1,7 +1,5 @@
 //! Bevy Remote Protocol (BRP) plugin builder and custom engine RPC methods.
 
-use std::path::PathBuf;
-
 use bevy_ecs::{entity::Entity, hierarchy::ChildOf, name::Name, query::With, system::In, world::World};
 use bevy_math::Vec3;
 use bevy_remote::{
@@ -14,21 +12,26 @@ use bevy_transform::components::Transform;
 use engine_core::{EntityGuid, EntityGuidMap, ProjectPaths, WorldMode};
 use engine_protocol::{
     AddComponentParams, ComponentMutationResult, DeleteEntityParams, DeleteEntityResult,
+    PrefabApplyResult, PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams,
+    PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams, PrefabSpawnResult,
     RemoveComponentParams, ReparentEntityParams, ReparentEntityResult, SceneLoadParams,
     SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
     SetViewportModeParams, SetViewportModeResult, SpawnPresetParams, SpawnPresetResult,
     ViewportCameraMode, WorldTreeResult, METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE,
     METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE, METHOD_ENTITY_REPARENT,
     METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO,
-    METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE,
-    METHOD_WORLD_TREE,
+    METHOD_PREFAB_APPLY, METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE,
+    METHOD_PREFAB_SPAWN, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE,
+    METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
 };
 use engine_render::ViewportConfig;
 use engine_scene::{
-    build_scene_tree, default_preset_name, despawn_subtree, load_level_from_file,
+    apply_prefab_instance, build_scene_tree, default_preset_name, despawn_subtree,
+    ensure_prefab_extension, list_prefab_files, load_level_from_file, normalize_prefab_path,
     read_reflected_component_json, remove_reflected_component, reset_to_new_scene,
-    save_level_to_file, snapshot_subtree, spawn_preset, write_reflected_component_json,
-    ActiveScene, LevelMetadata, SceneEntity,
+    resolve_prefab_instance_root, revert_prefab_instance, save_level_to_file, save_prefab_to_file,
+    snapshot_subtree, spawn_prefab_from_file, spawn_preset, write_reflected_component_json,
+    ActiveScene, LevelMetadata, PrefabMember, SceneEntity,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -36,8 +39,9 @@ use serde_json::Value;
 use crate::{
     config::EditorBridgeConfig,
     history::{
-        apply_reparent, now_epoch_ms, prune_selection_guids, redo_last, short_type_name, undo_last,
-        EditorCommand, EditorHistory,
+        apply_reparent, now_epoch_ms, prune_selection_guids, redo_last, resolve_project_path,
+        short_type_name, sync_entity_prefab_overrides_if_member, undo_last, EditorCommand,
+        EditorHistory,
     },
     selection::{BridgeDirtyFlags, EditorSelection},
 };
@@ -59,6 +63,11 @@ pub fn build_remote_plugin() -> RemotePlugin {
         .with_method_main(METHOD_HISTORY_UNDO, handle_history_undo)
         .with_method_main(METHOD_HISTORY_REDO, handle_history_redo)
         .with_method_main(METHOD_HISTORY_STATE, handle_history_state)
+        .with_method_main(METHOD_PREFAB_SAVE, handle_prefab_save)
+        .with_method_main(METHOD_PREFAB_SPAWN, handle_prefab_spawn)
+        .with_method_main(METHOD_PREFAB_APPLY, handle_prefab_apply)
+        .with_method_main(METHOD_PREFAB_REVERT, handle_prefab_revert)
+        .with_method_main(METHOD_PREFAB_LIST, handle_prefab_list)
         .with_method_main(METHOD_VIEWPORT_SET_MODE, handle_viewport_set_mode)
 }
 
@@ -82,16 +91,6 @@ pub fn build_remote_http_plugin(config: &EditorBridgeConfig) -> RemoteHttpPlugin
 
 fn serialize_result<T: Serialize>(value: T) -> BrpResult {
     serde_json::to_value(value).map_err(BrpError::internal)
-}
-
-fn resolve_project_path(world: &World, raw_path: &str) -> PathBuf {
-    let candidate = PathBuf::from(raw_path);
-    if candidate.is_relative()
-        && let Some(paths) = world.get_resource::<ProjectPaths>()
-    {
-        return paths.root_dir.join(candidate);
-    }
-    candidate
 }
 
 fn sync_camera_mode_for_world_mode(world: &mut World, world_mode: WorldMode) {
@@ -144,7 +143,10 @@ fn lookup_entity_by_guid(world: &World, guid: EntityGuid) -> Result<Entity, BrpE
 fn is_protected_component(type_path: &str) -> bool {
     matches!(
         type_path,
-        "engine_core::guid::EntityGuid" | "engine_scene::components::SceneEntity"
+        "engine_core::guid::EntityGuid"
+            | "engine_scene::components::SceneEntity"
+            | "engine_scene::prefab::PrefabInstance"
+            | "engine_scene::prefab::PrefabMember"
     )
 }
 
@@ -476,6 +478,7 @@ fn handle_component_set(In(params): In<Option<Value>>, world: &mut World) -> Brp
         params.type_path.as_str(),
         "bevy_ecs::name::Name" | "bevy_camera::visibility::Visibility"
     );
+    sync_entity_prefab_overrides_if_member(world, params.guid);
     mark_mutation_dirty(world, hierarchy_dirty, Some(params.guid));
 
     serialize_result(ComponentMutationResult {
@@ -519,6 +522,7 @@ fn handle_component_add(In(params): In<Option<Value>>, world: &mut World) -> Brp
         history.record(cmd, None, now_epoch_ms());
     }
 
+    sync_entity_prefab_overrides_if_member(world, params.guid);
     mark_mutation_dirty(world, true, Some(params.guid));
 
     serialize_result(ComponentMutationResult {
@@ -556,6 +560,7 @@ fn handle_component_remove(In(params): In<Option<Value>>, world: &mut World) -> 
         );
     }
 
+    sync_entity_prefab_overrides_if_member(world, params.guid);
     mark_mutation_dirty(world, true, Some(params.guid));
 
     serialize_result(ComponentMutationResult {
@@ -580,6 +585,198 @@ fn handle_history_state(In(_params): In<Option<Value>>, world: &mut World) -> Br
         .map(EditorHistory::state)
         .unwrap_or_default();
     serialize_result(state)
+}
+
+fn handle_prefab_save(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: PrefabSaveParams = parse_some(params)?;
+    if params.path.trim().is_empty() {
+        return Err(BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: "Prefab save path must not be empty".to_owned(),
+            data: None,
+        });
+    }
+    let root_entity = lookup_entity_by_guid(world, params.root_guid)?;
+    let ensured = ensure_prefab_extension(&params.path);
+    let abs_path = resolve_project_path(world, &ensured.to_string_lossy());
+    let project_root = world
+        .get_resource::<ProjectPaths>()
+        .map(|paths| paths.root_dir.clone());
+    let prefab_path_key = normalize_prefab_path(&abs_path, project_root.as_deref());
+
+    let (root_source_guid, entity_count) = save_prefab_to_file(
+        world,
+        root_entity,
+        &abs_path,
+        &prefab_path_key,
+        params.name.as_deref(),
+    )
+    .map_err(BrpError::internal)?;
+
+    mark_mutation_dirty(world, true, Some(params.root_guid));
+
+    serialize_result(PrefabSaveResult {
+        prefab_path: prefab_path_key,
+        root_source_guid,
+        entity_count,
+    })
+}
+
+fn handle_prefab_spawn(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: PrefabSpawnParams = parse_some(params)?;
+    if params.path.trim().is_empty() {
+        return Err(BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: "Prefab path must not be empty".to_owned(),
+            data: None,
+        });
+    }
+    let parent_entity = match params.parent_guid {
+        Some(parent_guid) => Some(lookup_entity_by_guid(world, parent_guid)?),
+        None => None,
+    };
+
+    let abs_path = resolve_project_path(world, &params.path);
+    let project_root = world
+        .get_resource::<ProjectPaths>()
+        .map(|paths| paths.root_dir.clone());
+    let prefab_path_key = normalize_prefab_path(&abs_path, project_root.as_deref());
+
+    let (spawned_root, guid) = spawn_prefab_from_file(
+        world,
+        &abs_path,
+        &prefab_path_key,
+        parent_entity,
+        params.position.map(Vec3::from_array),
+    )
+    .map_err(BrpError::internal)?;
+
+    let name = world
+        .get::<Name>(spawned_root)
+        .map_or_else(|| "Prefab".to_owned(), |n| n.as_str().to_owned());
+
+    let snapshot = snapshot_subtree(world, spawned_root).map_err(BrpError::internal)?;
+    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+        history.record(
+            EditorCommand::CreateEntity {
+                snapshot,
+                label: format!("Instantiate {name}"),
+            },
+            None,
+            now_epoch_ms(),
+        );
+    }
+
+    mark_mutation_dirty(world, true, None);
+
+    serialize_result(PrefabSpawnResult {
+        guid,
+        entity_bits: spawned_root.to_bits(),
+        name,
+        prefab_path: prefab_path_key,
+    })
+}
+
+fn handle_prefab_apply(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: PrefabInstanceActionParams = parse_some(params)?;
+    let target_entity = lookup_entity_by_guid(world, params.guid)?;
+    let Some((instance_root, prefab_path)) = resolve_prefab_instance_root(world, target_entity)
+    else {
+        return Err(BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: format!("Entity {} does not belong to a PrefabInstance", params.guid),
+            data: None,
+        });
+    };
+
+    let abs_path = resolve_project_path(world, &prefab_path);
+    let updated_guids =
+        apply_prefab_instance(world, instance_root, &abs_path).map_err(BrpError::internal)?;
+
+    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+        history.queue_inspector_refresh(&updated_guids);
+    }
+    mark_mutation_dirty(world, true, None);
+
+    serialize_result(PrefabApplyResult {
+        prefab_path,
+        updated_guids,
+    })
+}
+
+fn handle_prefab_revert(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: PrefabRevertParams = parse_some(params)?;
+    let target_entity = lookup_entity_by_guid(world, params.guid)?;
+    let Some((instance_root, prefab_path)) = resolve_prefab_instance_root(world, target_entity)
+    else {
+        return Err(BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: format!("Entity {} does not belong to a PrefabInstance", params.guid),
+            data: None,
+        });
+    };
+
+    let component_filter_source = match params.type_path.as_deref() {
+        Some(tp) => {
+            let member = world.get::<PrefabMember>(target_entity).copied().ok_or_else(|| {
+                BrpError {
+                    code: error_codes::INVALID_PARAMS,
+                    message: format!("Entity {} has no PrefabMember component", params.guid),
+                    data: None,
+                }
+            })?;
+            Some((member.source_guid, tp.to_owned()))
+        }
+        None => None,
+    };
+
+    let abs_path = resolve_project_path(world, &prefab_path);
+    let before = snapshot_subtree(world, instance_root).map_err(BrpError::internal)?;
+    let filter_ref = component_filter_source
+        .as_ref()
+        .map(|(src_guid, tp)| (*src_guid, tp.as_str()));
+    let reverted_guids = revert_prefab_instance(world, instance_root, &abs_path, filter_ref)
+        .map_err(BrpError::internal)?;
+    let after = snapshot_subtree(world, instance_root).map_err(BrpError::internal)?;
+
+    let label = match component_filter_source {
+        Some((_, ref tp)) => format!("Revert {}", short_type_name(tp)),
+        None => "Revert Prefab Instance".to_owned(),
+    };
+
+    let root_guid = world.get::<EntityGuid>(instance_root).copied();
+    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+        history.record(
+            EditorCommand::RestoreSubtree {
+                before,
+                after,
+                label,
+            },
+            None,
+            now_epoch_ms(),
+        );
+        history.queue_inspector_refresh(&reverted_guids);
+        if let Some(r_guid) = root_guid {
+            history.queue_inspector_refresh(&[r_guid]);
+        }
+    }
+    mark_mutation_dirty(world, true, None);
+
+    serialize_result(PrefabRevertResult {
+        prefab_path,
+        reverted_guids,
+    })
+}
+
+fn handle_prefab_list(In(_params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let search_root = world
+        .get_resource::<ProjectPaths>()
+        .map(|paths| paths.root_dir.clone())
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_default();
+
+    let prefabs = list_prefab_files(&search_root);
+    serialize_result(PrefabListResult { prefabs })
 }
 
 fn handle_viewport_set_mode(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {

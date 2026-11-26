@@ -7,11 +7,15 @@ import type {
 const PROTECTED_COMPONENTS = new Set<string>([
   "engine_core::guid::EntityGuid",
   "engine_scene::components::SceneEntity",
+  "engine_scene::prefab::PrefabInstance",
+  "engine_scene::prefab::PrefabMember",
 ]);
 
 const INTERNAL_RUNTIME_EXACT = new Set<string>([
   "engine_core::guid::EntityGuid",
   "engine_scene::components::SceneEntity",
+  "engine_scene::prefab::PrefabInstance",
+  "engine_scene::prefab::PrefabMember",
   "bevy_transform::components::global_transform::GlobalTransform",
   "bevy_transform::components::transform::TransformTreeChanged",
   "bevy_camera::visibility::InheritedVisibility",

@@ -38,7 +38,10 @@ use serde::{
 use serde_json::Value;
 use thiserror::Error;
 
-use crate::components::{ActiveScene, SceneEntity};
+use crate::{
+    components::{ActiveScene, SceneEntity},
+    prefab::{PrefabInstance, PrefabMember},
+};
 
 /// Supported `.level.ron` file format version.
 pub const CURRENT_LEVEL_VERSION: u32 = 1;
@@ -79,6 +82,12 @@ impl SceneSerializationFilter {
     #[must_use]
     pub fn contains<T: Component>(&self) -> bool {
         self.allowed_components.contains(&TypeId::of::<T>())
+    }
+
+    /// Returns `true` if component `type_id` is currently in the scene allow-list.
+    #[must_use]
+    pub fn contains_id(&self, type_id: TypeId) -> bool {
+        self.allowed_components.contains(&type_id)
     }
 
     /// Converts this allow-list into a [`WorldFilter`] for [`DynamicWorldBuilder`].
@@ -594,7 +603,7 @@ pub fn remove_reflected_component(
     Ok(())
 }
 
-fn restore_hierarchy_children(world: &mut World, spawned_entities: &[Entity]) {
+pub(crate) fn restore_hierarchy_children(world: &mut World, spawned_entities: &[Entity]) {
     let child_links: Vec<(Entity, Entity)> = spawned_entities
         .iter()
         .filter_map(|&entity| {
@@ -621,7 +630,7 @@ fn restore_hierarchy_children(world: &mut World, spawned_entities: &[Entity]) {
     }
 }
 
-fn ensure_scene_guids(world: &mut World, spawned_entities: &[Entity]) {
+pub(crate) fn ensure_scene_guids(world: &mut World, spawned_entities: &[Entity]) {
     let missing_guid_entities: Vec<Entity> = spawned_entities
         .iter()
         .copied()
@@ -653,6 +662,8 @@ pub fn build_scene_tree(world: &World) -> Vec<SceneTreeNode> {
         parent_guid: Option<EntityGuid>,
         visible: bool,
         components: Vec<String>,
+        prefab_path: Option<String>,
+        is_prefab_member: bool,
     }
 
     let mut nodes_by_guid: HashMap<EntityGuid, RawNode> = HashMap::new();
@@ -697,6 +708,11 @@ pub fn build_scene_tree(world: &World) -> Vec<SceneTreeNode> {
             }
             components.sort();
 
+            let prefab_path = entity_ref
+                .get::<PrefabInstance>()
+                .map(|instance| instance.prefab_path.clone());
+            let is_prefab_member = prefab_path.is_some() || entity_ref.contains::<PrefabMember>();
+
             all_guids.insert(guid);
             if let Some(p_guid) = parent_guid {
                 children_map.entry(p_guid).or_default().push(guid);
@@ -710,6 +726,8 @@ pub fn build_scene_tree(world: &World) -> Vec<SceneTreeNode> {
                     parent_guid,
                     visible,
                     components,
+                    prefab_path,
+                    is_prefab_member,
                 },
             );
         }
@@ -741,6 +759,8 @@ pub fn build_scene_tree(world: &World) -> Vec<SceneTreeNode> {
             visible: raw.visible,
             children,
             components: raw.components.clone(),
+            prefab_path: raw.prefab_path.clone(),
+            is_prefab_member: raw.is_prefab_member,
         }
     }
 
@@ -765,7 +785,7 @@ pub fn build_scene_tree(world: &World) -> Vec<SceneTreeNode> {
         .collect()
 }
 
-struct NoopLoadFromPath;
+pub(crate) struct NoopLoadFromPath;
 
 impl LoadFromPath for NoopLoadFromPath {
     fn load_from_path_erased(

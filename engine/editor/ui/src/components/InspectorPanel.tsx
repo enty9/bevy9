@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronDown,
   ChevronRight,
+  Package,
+  PackagePlus,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from "lucide-react";
 import {
@@ -14,28 +17,46 @@ import {
   sortComponentPaths,
 } from "../lib/schemaDefaults";
 import type { BrpClient } from "../protocol/brpClient";
-import type { BrpRegistrySchema, SceneTreeNode } from "../protocol/types";
+import type {
+  BrpRegistrySchema,
+  PrefabInstanceData,
+  PrefabMemberData,
+  SceneTreeNode,
+} from "../protocol/types";
 import { SchemaField } from "./SchemaField";
 
 interface InspectorPanelProps {
   selectedNode: SceneTreeNode | null;
+  prefabRootNode: SceneTreeNode | null;
   selectedCount: number;
   brpClient: BrpClient | null;
   registrySchema: BrpRegistrySchema | null;
   inspectorRevision?: number;
   onComponentChanged: (refreshTree: boolean) => void;
   onDeleteEntity: (node: SceneTreeNode) => void;
+  onSaveAsPrefab: (node: SceneTreeNode) => void;
+  onApplyPrefab: (node: SceneTreeNode) => void;
+  onRevertPrefab: (node: SceneTreeNode) => void;
+  onRevertPrefabComponent: (node: SceneTreeNode, typePath: string) => void;
   onCollapse: () => void;
 }
 
+const PREFAB_INSTANCE_PATH = "engine_scene::prefab::PrefabInstance";
+const PREFAB_MEMBER_PATH = "engine_scene::prefab::PrefabMember";
+
 export function InspectorPanel({
   selectedNode,
+  prefabRootNode,
   selectedCount,
   brpClient,
   registrySchema,
   inspectorRevision = 0,
   onComponentChanged,
   onDeleteEntity,
+  onSaveAsPrefab,
+  onApplyPrefab,
+  onRevertPrefab,
+  onRevertPrefabComponent,
   onCollapse,
 }: InspectorPanelProps) {
   const [showRuntime, setShowRuntime] = useState(false);
@@ -48,6 +69,10 @@ export function InspectorPanel({
   const [componentErrors, setComponentErrors] = useState<Record<string, string>>(
     {},
   );
+  const [prefabInstance, setPrefabInstance] = useState<PrefabInstanceData | null>(
+    null,
+  );
+  const [prefabMember, setPrefabMember] = useState<PrefabMemberData | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -102,10 +127,65 @@ export function InspectorPanel({
     return sortComponentPaths(filtered);
   }, [selectedNode, showRuntime]);
 
+  const fetchPrefabMeta = useCallback(
+    async (token: number) => {
+      if (!selectedNode || !brpClient || !prefabRootNode) {
+        if (fetchTokenRef.current === token) {
+          setPrefabInstance(null);
+          setPrefabMember(null);
+        }
+        return;
+      }
+
+      try {
+        const [instRes, memberRes] = await Promise.all([
+          brpClient.getComponents(
+            prefabRootNode.entity_bits,
+            [PREFAB_INSTANCE_PATH],
+            false,
+          ),
+          selectedNode.is_prefab_member
+            ? brpClient.getComponents(
+                selectedNode.entity_bits,
+                [PREFAB_MEMBER_PATH],
+                false,
+              )
+            : Promise.resolve(null),
+        ]);
+        if (fetchTokenRef.current !== token) {
+          return;
+        }
+        const instMap =
+          (instRes as { components?: Record<string, unknown> })?.components ??
+          (instRes as unknown as Record<string, unknown>);
+        const memberMap = memberRes
+          ? ((memberRes as { components?: Record<string, unknown> })?.components ??
+            (memberRes as unknown as Record<string, unknown>))
+          : null;
+        setPrefabInstance(
+          (instMap?.[PREFAB_INSTANCE_PATH] as PrefabInstanceData | undefined) ??
+            null,
+        );
+        setPrefabMember(
+          (memberMap?.[PREFAB_MEMBER_PATH] as PrefabMemberData | undefined) ??
+            null,
+        );
+      } catch {
+        if (fetchTokenRef.current === token) {
+          setPrefabInstance(null);
+          setPrefabMember(null);
+        }
+      }
+    },
+    [selectedNode, prefabRootNode, brpClient],
+  );
+
   const fetchComponentValues = useCallback(async () => {
     if (!selectedNode || !brpClient || visibleComponentPaths.length === 0) {
       setComponentValues({});
       setComponentErrors({});
+      setPrefabInstance(null);
+      setPrefabMember(null);
       return;
     }
 
@@ -114,11 +194,14 @@ export function InspectorPanel({
     setErrorBanner(null);
 
     try {
-      const response = await brpClient.getComponents(
-        selectedNode.entity_bits,
-        visibleComponentPaths,
-        false,
-      );
+      const [response] = await Promise.all([
+        brpClient.getComponents(
+          selectedNode.entity_bits,
+          visibleComponentPaths,
+          false,
+        ),
+        fetchPrefabMeta(token),
+      ]);
       if (fetchTokenRef.current !== token) {
         return;
       }
@@ -150,7 +233,7 @@ export function InspectorPanel({
         setLoading(false);
       }
     }
-  }, [selectedNode, brpClient, visibleComponentPaths]);
+  }, [selectedNode, brpClient, visibleComponentPaths, fetchPrefabMeta]);
 
   useEffect(() => {
     void inspectorRevision;
@@ -242,6 +325,9 @@ export function InspectorPanel({
           mergeKey,
           label,
         );
+        if (prefabRootNode) {
+          void fetchPrefabMeta(fetchTokenRef.current);
+        }
         onComponentChanged(refreshTree);
       } catch (err) {
         setErrorBanner(err instanceof Error ? err.message : String(err));
@@ -282,6 +368,9 @@ export function InspectorPanel({
         ...prev,
         [typePath]: defaultValue,
       }));
+      if (prefabRootNode) {
+        void fetchPrefabMeta(fetchTokenRef.current);
+      }
       onComponentChanged(true);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : String(err));
@@ -295,6 +384,9 @@ export function InspectorPanel({
     setErrorBanner(null);
     try {
       await brpClient.removeComponent(selectedNode.guid, typePath);
+      if (prefabRootNode) {
+        void fetchPrefabMeta(fetchTokenRef.current);
+      }
       onComponentChanged(true);
     } catch (err) {
       setErrorBanner(err instanceof Error ? err.message : String(err));
@@ -357,20 +449,72 @@ export function InspectorPanel({
           <div className="inspector-entity-card">
             <div className="inspector-entity-top">
               <strong>{selectedNode.name}</strong>
-              <button
-                type="button"
-                className="ghost-btn icon-mini"
-                title="Delete entity"
-                onClick={() => onDeleteEntity(selectedNode)}
-              >
-                <Trash2 size={13} />
-              </button>
+              <div className="panel-actions">
+                {!prefabRootNode && (
+                  <button
+                    type="button"
+                    className="ghost-btn icon-mini"
+                    title="Save subtree as .prefab.ron"
+                    onClick={() => onSaveAsPrefab(selectedNode)}
+                  >
+                    <PackagePlus size={13} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ghost-btn icon-mini"
+                  title="Delete entity"
+                  onClick={() => onDeleteEntity(selectedNode)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             </div>
             <div className="muted inspector-meta">
               GUID: {selectedNode.guid} · ECS: {selectedNode.entity_bits}
               {selectedCount > 1 ? ` · (${selectedCount} selected)` : ""}
             </div>
           </div>
+
+          {prefabRootNode && (
+            <div className="prefab-banner">
+              <div className="prefab-banner-header">
+                <span className="prefab-banner-title">
+                  <Package size={13} />
+                  <span>
+                    {prefabInstance?.prefab_path ??
+                      prefabRootNode.prefab_path ??
+                      "Prefab Instance"}
+                  </span>
+                </span>
+                <span className="badge">
+                  {Object.keys(prefabInstance?.overrides ?? {}).length} overrides
+                </span>
+              </div>
+              <div className="prefab-banner-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!brpClient}
+                  title="Write instance changes back to .prefab.ron and propagate to sibling instances"
+                  onClick={() => onApplyPrefab(selectedNode)}
+                >
+                  Apply to Prefab
+                </button>
+                <button
+                  type="button"
+                  disabled={
+                    !brpClient ||
+                    Object.keys(prefabInstance?.overrides ?? {}).length === 0
+                  }
+                  title="Revert all overrides on this prefab instance back to template"
+                  onClick={() => onRevertPrefab(selectedNode)}
+                >
+                  <RotateCcw size={12} /> Revert All
+                </button>
+              </div>
+            </div>
+          )}
 
           {errorBanner && <div className="badge crashed">{errorBanner}</div>}
 
@@ -429,8 +573,30 @@ export function InspectorPanel({
             const compErr = componentErrors[typePath];
             const hasValue = typePath in componentValues;
 
+            const activeSourceGuid =
+              prefabMember?.source_guid ?? prefabInstance?.root_source_guid ?? null;
+            const overridesMap = prefabInstance?.overrides ?? {};
+            const modifiedFields: string[] = [];
+            if (activeSourceGuid) {
+              const compKey = `${activeSourceGuid}::${typePath}`;
+              if (compKey in overridesMap) {
+                modifiedFields.push("entire component");
+              } else {
+                const fieldPrefix = `${compKey}::`;
+                for (const ovKey of Object.keys(overridesMap)) {
+                  if (ovKey.startsWith(fieldPrefix)) {
+                    modifiedFields.push(ovKey.slice(fieldPrefix.length));
+                  }
+                }
+              }
+            }
+            const isOverridden = modifiedFields.length > 0;
+
             return (
-              <section key={typePath} className="component-card">
+              <section
+                key={typePath}
+                className={`component-card ${isOverridden ? "prefab-override" : ""}`}
+              >
                 <div
                   className="component-card-header"
                   title={typePath}
@@ -443,21 +609,44 @@ export function InspectorPanel({
                       <ChevronDown size={13} />
                     )}
                     <span>{title}</span>
+                    {isOverridden && (
+                      <span
+                        className="override-badge"
+                        title={`Modified from prefab: ${modifiedFields.join(", ")}`}
+                      >
+                        Modified
+                      </span>
+                    )}
                   </span>
 
-                  {canRemove && (
-                    <button
-                      type="button"
-                      className="ghost-btn icon-mini"
-                      title={`Remove ${title}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void handleRemoveComponent(typePath);
-                      }}
-                    >
-                      ×
-                    </button>
-                  )}
+                  <div className="panel-actions">
+                    {isOverridden && (
+                      <button
+                        type="button"
+                        className="ghost-btn icon-mini"
+                        title={`Revert ${title} to prefab template`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRevertPrefabComponent(selectedNode, typePath);
+                        }}
+                      >
+                        <RotateCcw size={11} />
+                      </button>
+                    )}
+                    {canRemove && (
+                      <button
+                        type="button"
+                        className="ghost-btn icon-mini"
+                        title={`Remove ${title}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleRemoveComponent(typePath);
+                        }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {!collapsed && (

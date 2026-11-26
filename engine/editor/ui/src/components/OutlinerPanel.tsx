@@ -9,20 +9,29 @@ import {
   ChevronRight,
   Eye,
   EyeOff,
+  FolderOpen,
+  Package,
   Pencil,
   Plus,
   Search,
   Trash2,
 } from "lucide-react";
-import type { EntityPresetKind, SceneTreeNode } from "../protocol/types";
+import type {
+  EntityPresetKind,
+  PrefabFileEntry,
+  SceneTreeNode,
+} from "../protocol/types";
 
 interface OutlinerPanelProps {
   roots: SceneTreeNode[];
   selectedGuids: string[];
+  prefabs: PrefabFileEntry[];
   connected: boolean;
   onSelect: (guids: string[]) => void;
   onToggleVisibility: (node: SceneTreeNode) => void;
   onSpawnPreset: (preset: EntityPresetKind, parentGuid: string | null) => void;
+  onSpawnPrefab: (path: string, parentGuid: string | null) => void;
+  onBrowseSpawnPrefab: (parentGuid: string | null) => void;
   onRename: (node: SceneTreeNode, newName: string) => void;
   onDelete: (node: SceneTreeNode) => void;
   onReparent: (guid: string, parentGuid: string | null) => void;
@@ -117,10 +126,13 @@ function filterTree(nodes: SceneTreeNode[], query: string): SceneTreeNode[] {
 export function OutlinerPanel({
   roots,
   selectedGuids,
+  prefabs,
   connected,
   onSelect,
   onToggleVisibility,
   onSpawnPreset,
+  onSpawnPrefab,
+  onBrowseSpawnPrefab,
   onRename,
   onDelete,
   onReparent,
@@ -234,7 +246,7 @@ export function OutlinerPanel({
         <div
           className={`outliner-row ${isSelected ? "selected" : ""} ${
             isDragTarget ? "drag-over" : ""
-          } ${!node.visible ? "dimmed" : ""}`}
+          } ${node.is_prefab_member ? "outliner-prefab" : ""} ${!node.visible ? "dimmed" : ""}`}
           style={{ paddingLeft: 6 + depth * 14 }}
           draggable={!isEditing && connected}
           onDragStart={(e) => handleRowDragStart(e, node)}
@@ -323,7 +335,20 @@ export function OutlinerPanel({
               }}
             />
           ) : (
-            <span className="outliner-name" title={node.guid}>
+            <span
+              className="outliner-name"
+              title={
+                node.prefab_path
+                  ? `${node.guid} · Prefab: ${node.prefab_path}`
+                  : node.guid
+              }
+            >
+              {node.prefab_path && (
+                <Package
+                  size={12}
+                  style={{ marginRight: 5, verticalAlign: "-1px", flexShrink: 0 }}
+                />
+              )}
               {node.name}
             </span>
           )}
@@ -426,6 +451,42 @@ export function OutlinerPanel({
                     ))}
                   </div>
                 ))}
+
+                <div className="preset-group">
+                  <div className="preset-group-label">Prefabs</div>
+                  {prefabs.map((prefab) => (
+                    <button
+                      key={prefab.relative_path}
+                      type="button"
+                      className="ghost-btn preset-btn"
+                      title={prefab.relative_path}
+                      onClick={() => {
+                        setAddMenuOpen(false);
+                        const parentGuid =
+                          spawnUnderSelected && selectedGuids.length > 0
+                            ? selectedGuids[0]
+                            : null;
+                        onSpawnPrefab(prefab.relative_path, parentGuid);
+                      }}
+                    >
+                      <Package size={12} /> {prefab.name}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="ghost-btn preset-btn"
+                    onClick={() => {
+                      setAddMenuOpen(false);
+                      const parentGuid =
+                        spawnUnderSelected && selectedGuids.length > 0
+                          ? selectedGuids[0]
+                          : null;
+                      onBrowseSpawnPrefab(parentGuid);
+                    }}
+                  >
+                    <FolderOpen size={12} /> Browse .prefab.ron...
+                  </button>
+                </div>
               </div>
             )}
           </div>
