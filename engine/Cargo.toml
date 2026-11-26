@@ -3,6 +3,7 @@ resolver = "3"
 members = [
   "crates/engine_core",
   "crates/engine_protocol",
+  "crates/engine_assets",
   "crates/engine_render",
   "crates/engine_scene",
   "crates/engine_editor_bridge",
@@ -31,6 +32,7 @@ semicolon_if_nothing_returned = "warn"
 [workspace.dependencies]
 engine_core = { path = "crates/engine_core" }
 engine_protocol = { path = "crates/engine_protocol" }
+engine_assets = { path = "crates/engine_assets" }
 engine_render = { path = "crates/engine_render" }
 engine_scene = { path = "crates/engine_scene" }
 engine_editor_bridge = { path = "crates/engine_editor_bridge" }
@@ -44,7 +46,8 @@ bevy_color = { path = "../crates/bevy_color", features = ["serialize"] }
 bevy_diagnostic = { path = "../crates/bevy_diagnostic" }
 bevy_ecs = { path = "../crates/bevy_ecs", features = ["serialize"] }
 bevy_gizmos = { path = "../crates/bevy_gizmos" }
-bevy_image = { path = "../crates/bevy_image" }
+bevy_gltf = { path = "../crates/bevy_gltf" }
+bevy_image = { path = "../crates/bevy_image", features = ["png", "bmp", "tga"] }
 bevy_input = { path = "../crates/bevy_input" }
 bevy_light = { path = "../crates/bevy_light" }
 bevy_log = { path = "../crates/bevy_log" }
@@ -66,8 +69,14 @@ bevy_window = { path = "../crates/bevy_window" }
 bevy_world_serialization = { path = "../crates/bevy_world_serialization", features = ["serialize"] }
 
 anyhow = "1.0"
+base64 = "0.23"
+blake3 = "1.8"
 clap = { version = "4.6", features = ["derive"] }
 crossbeam-channel = "0.5"
+futures-lite = "2.6"
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga"] }
+notify = "8.2"
 ron = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -76,6 +85,7 @@ toml = "1.1"
 tracing = "0.1"
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 uuid = { version = "1.26", features = ["v4", "serde"] }
+walkdir = "2.5"
 
 [profile.dev]
 opt-level = 0

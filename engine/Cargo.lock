@@ -2656,6 +2656,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_assets"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bevy_app",
+ "bevy_asset",
+ "bevy_ecs",
+ "bevy_gltf",
+ "bevy_image",
+ "bevy_math",
+ "bevy_reflect",
+ "bevy_world_serialization",
+ "blake3",
+ "crossbeam-channel",
+ "engine_core",
+ "engine_protocol",
+ "futures-lite",
+ "gltf",
+ "image",
+ "notify",
+ "ron",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "engine_core"
 version = "0.1.0"
 dependencies = [

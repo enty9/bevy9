@@ -1,10 +1,11 @@
 //! Custom Bevy Remote Protocol (BRP) method names and request/response payloads.
 
-use engine_core::{EntityGuid, WorldMode};
+use engine_core::{AssetUuid, EntityGuid, WorldMode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
+    assets::{AssetImportSettings, AssetKind, AssetRecord, AssetRegistrySnapshot, AssetFolderEntry},
     ipc::{HistoryStatePayload, SceneTreeNode},
     viewport::ViewportMode,
 };
@@ -65,6 +66,33 @@ pub const METHOD_PREFAB_REVERT: &str = "engine.prefab.revert";
 
 /// BRP method name for listing `.prefab.ron` files discovered inside the active project.
 pub const METHOD_PREFAB_LIST: &str = "engine.prefab.list";
+
+/// BRP method name for listing folders and filtered assets in the Content Browser.
+pub const METHOD_ASSET_LIST: &str = "engine.asset.list";
+
+/// BRP method name for importing external files into the project `assets/` folder.
+pub const METHOD_ASSET_IMPORT: &str = "engine.asset.import";
+
+/// BRP method name for moving or renaming an indexed asset while preserving its [`AssetUuid`].
+pub const METHOD_ASSET_MOVE: &str = "engine.asset.move";
+
+/// BRP method name for deleting an indexed asset and its `.b9meta` sidecar.
+pub const METHOD_ASSET_DELETE: &str = "engine.asset.delete";
+
+/// BRP method name for creating a subfolder inside `assets/`.
+pub const METHOD_ASSET_CREATE_FOLDER: &str = "engine.asset.create_folder";
+
+/// BRP method name for updating importer settings or tags in an asset's `.b9meta` sidecar.
+pub const METHOD_ASSET_UPDATE_SETTINGS: &str = "engine.asset.update_settings";
+
+/// BRP method name for requesting or retrieving a cached PNG thumbnail data URL for an asset.
+pub const METHOD_ASSET_THUMBNAIL: &str = "engine.asset.thumbnail";
+
+/// BRP method name for spawning an asset directly into the viewport at canvas coordinates `(x, y)`.
+pub const METHOD_ASSET_SPAWN_IN_VIEWPORT: &str = "engine.asset.spawn_in_viewport";
+
+/// BRP method name for forcing an immediate full rescan of the project `AssetRegistry`.
+pub const METHOD_ASSET_RESCAN: &str = "engine.asset.rescan";
 
 /// Parameters for [`METHOD_SCENE_NEW`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -373,3 +401,132 @@ pub struct PrefabListResult {
     /// Sorted list of discovered project `.prefab.ron` assets.
     pub prefabs: Vec<PrefabFileEntry>,
 }
+
+/// Optional filter parameters for [`METHOD_ASSET_LIST`].
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetListParams {
+    /// Optional folder prefix filter relative to `assets/` (empty string = root).
+    #[serde(default)]
+    pub folder: Option<String>,
+    /// Optional [`AssetKind`] filter.
+    #[serde(default)]
+    pub kind: Option<AssetKind>,
+    /// Case-insensitive substring matched against asset name, relative path, or tags.
+    #[serde(default)]
+    pub search: Option<String>,
+    /// Optional exact tag filter.
+    #[serde(default)]
+    pub tag: Option<String>,
+}
+
+/// Parameters for [`METHOD_ASSET_IMPORT`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetImportParams {
+    /// Absolute filesystem paths of external files to import.
+    pub source_paths: Vec<String>,
+    /// Target subfolder relative to `assets/` (empty string imports into `assets/` root).
+    #[serde(default)]
+    pub target_folder: String,
+}
+
+/// Response returned by [`METHOD_ASSET_IMPORT`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetImportResult {
+    /// Newly indexed asset records produced by the import.
+    pub imported: Vec<AssetRecord>,
+}
+
+/// Parameters for [`METHOD_ASSET_MOVE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetMoveParams {
+    /// Persistent [`AssetUuid`] of the asset to move or rename.
+    pub uuid: AssetUuid,
+    /// Destination path relative to `assets/` (including filename and extension).
+    pub new_relative_path: String,
+}
+
+/// Parameters for [`METHOD_ASSET_DELETE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetDeleteParams {
+    /// Persistent [`AssetUuid`] of the asset to remove.
+    pub uuid: AssetUuid,
+    /// If `false` and reverse dependents exist, returns [`AssetDeleteResult`] without deleting or errors cleanly.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Response returned by [`METHOD_ASSET_DELETE`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetDeleteResult {
+    /// Target asset [`AssetUuid`].
+    pub deleted_uuid: AssetUuid,
+    /// Reverse dependents detected prior to deletion.
+    #[serde(default)]
+    pub dependents: Vec<AssetUuid>,
+}
+
+/// Parameters for [`METHOD_ASSET_CREATE_FOLDER`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetCreateFolderParams {
+    /// New directory path relative to `assets/`.
+    pub relative_path: String,
+}
+
+/// Parameters for [`METHOD_ASSET_UPDATE_SETTINGS`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetUpdateSettingsParams {
+    /// Persistent [`AssetUuid`] of the asset whose sidecar is being updated.
+    pub uuid: AssetUuid,
+    /// Updated importer settings written to `*.b9meta`.
+    pub import_settings: AssetImportSettings,
+    /// Optional updated tag list (`None` leaves existing tags unchanged).
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
+}
+
+/// Parameters for [`METHOD_ASSET_THUMBNAIL`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetThumbnailParams {
+    /// Persistent [`AssetUuid`] of the requested asset thumbnail.
+    pub uuid: AssetUuid,
+}
+
+/// Response returned by [`METHOD_ASSET_THUMBNAIL`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetThumbnailResult {
+    /// Requested asset [`AssetUuid`].
+    pub uuid: AssetUuid,
+    /// `true` once the PNG thumbnail has finished generating and is included in [`Self::data_url`].
+    pub ready: bool,
+    /// Base64 `data:image/png;base64,...` URI when [`Self::ready`] is `true`.
+    #[serde(default)]
+    pub data_url: Option<String>,
+}
+
+/// Parameters for [`METHOD_ASSET_SPAWN_IN_VIEWPORT`].
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct AssetSpawnInViewportParams {
+    /// Persistent [`AssetUuid`] of the asset dropped from Content Browser.
+    pub uuid: AssetUuid,
+    /// Viewport canvas X coordinate in pixels.
+    pub x: f32,
+    /// Viewport canvas Y coordinate in pixels.
+    pub y: f32,
+}
+
+/// Response returned by [`METHOD_ASSET_SPAWN_IN_VIEWPORT`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetSpawnInViewportResult {
+    /// Persistent [`EntityGuid`] assigned to the newly spawned scene entity.
+    pub guid: EntityGuid,
+    /// Ephemeral ECS entity bits.
+    pub entity_bits: u64,
+    /// Display name of the spawned entity.
+    pub name: String,
+}
+
+/// Re-exported alias clarifying [`AssetRegistrySnapshot`] return type of [`METHOD_ASSET_LIST`] and [`METHOD_ASSET_RESCAN`].
+pub type AssetListResult = AssetRegistrySnapshot;
+
+/// Re-exported alias clarifying [`AssetFolderEntry`] return type of [`METHOD_ASSET_CREATE_FOLDER`].
+pub type AssetCreateFolderResult = AssetFolderEntry;

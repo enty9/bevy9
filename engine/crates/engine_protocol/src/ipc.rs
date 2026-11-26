@@ -197,6 +197,11 @@ pub enum ServerIpcMessage {
         /// Updated history stack summary.
         state: HistoryStatePayload,
     },
+    /// Notification that the project `AssetRegistry` or cached thumbnails changed.
+    AssetsChanged {
+        /// Monotonic revision counter bumped after rescans, moves, imports, or thumbnail generation.
+        revision: u64,
+    },
     /// Log entry emitted by the runtime.
     Log {
         /// Structured log entry.

@@ -1,5 +1,6 @@
 //! Core engine types, lifecycle schedules, and project manifest support.
 
+pub mod asset_id;
 pub mod guid;
 pub mod manifest;
 pub mod schedule;
@@ -8,6 +9,7 @@ pub mod world_mode;
 /// Commonly used core engine types.
 pub mod prelude {
     pub use crate::{
+        asset_id::AssetUuid,
         guid::{EntityGuid, EntityGuidMap},
         manifest::{ProjectManifest, ProjectManifestError, ProjectMetadata, ProjectPaths},
         schedule::{EngineFixedSet, EngineSet},
@@ -20,6 +22,7 @@ use bevy_app::{App, Plugin};
 use bevy_ecs::reflect::AppTypeRegistry;
 
 pub use crate::{
+    asset_id::AssetUuid,
     guid::{register_guid_hooks, EntityGuid, EntityGuidMap},
     manifest::{
         ProjectManifest, ProjectManifestError, ProjectMetadata, ProjectPaths, WindowConfig,
@@ -39,7 +42,9 @@ impl Plugin for EngineCorePlugin {
             app.init_resource::<AppTypeRegistry>();
         }
 
-        app.register_type::<EntityGuid>()
+        app.register_type::<AssetUuid>()
+            .register_type::<Option<AssetUuid>>()
+            .register_type::<EntityGuid>()
             .register_type::<WorldMode>()
             .init_resource::<EntityGuidMap>();
 

@@ -1,0 +1,36 @@
+[package]
+name = "engine_assets"
+description = "Asset UUID sidecars (.b9meta), AssetRegistry, importers, local DDC, thumbnails, and watcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+engine_core = { workspace = true }
+engine_protocol = { workspace = true }
+bevy_app = { workspace = true }
+bevy_asset = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_gltf = { workspace = true }
+bevy_image = { workspace = true }
+bevy_math = { workspace = true }
+bevy_reflect = { workspace = true }
+bevy_world_serialization = { workspace = true }
+base64 = { workspace = true }
+blake3 = { workspace = true }
+crossbeam-channel = { workspace = true }
+futures-lite = { workspace = true }
+gltf = { workspace = true }
+image = { workspace = true }
+notify = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }

@@ -1,5 +1,6 @@
 //! Shared IPC, BRP, viewport input, and binary frame wire types between editor and runtime.
 
+pub mod assets;
 pub mod ipc;
 pub mod rpc;
 pub mod viewport;
@@ -10,19 +11,31 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Commonly used protocol types and constants.
 pub mod prelude {
     pub use crate::{
+        assets::{
+            AssetFolderEntry, AssetImportSettings, AssetKind, AssetRecord, AssetRegistrySnapshot,
+            AtlasGridSettings, GltfImportSettings, ImageImportSettings, SubAssetInfo,
+            TextureFilterMode, TilemapImportSettings,
+        },
         ipc::{
             ClientIpcMessage, EditorLogEntry, FrameMetrics, HistoryStatePayload, LogLevel,
             SceneTreeNode, ServerIpcMessage,
         },
         rpc::{
-            AddComponentParams, ComponentMutationResult, DeleteEntityParams, DeleteEntityResult,
-            EntityPresetKind, HistoryStepResult, PrefabApplyResult, PrefabFileEntry,
-            PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams, PrefabRevertResult,
-            PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams, PrefabSpawnResult,
-            RemoveComponentParams, ReparentEntityParams, ReparentEntityResult, SceneLoadParams,
-            SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
-            SetViewportModeParams, SetViewportModeResult, SpawnPresetParams, SpawnPresetResult,
-            WorldTreeResult, METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET,
+            AddComponentParams, AssetCreateFolderParams, AssetCreateFolderResult,
+            AssetDeleteParams, AssetDeleteResult, AssetImportParams, AssetImportResult,
+            AssetListParams, AssetListResult, AssetMoveParams, AssetSpawnInViewportParams,
+            AssetSpawnInViewportResult, AssetThumbnailParams, AssetThumbnailResult,
+            AssetUpdateSettingsParams, ComponentMutationResult, DeleteEntityParams,
+            DeleteEntityResult, EntityPresetKind, HistoryStepResult, PrefabApplyResult,
+            PrefabFileEntry, PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams,
+            PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams,
+            PrefabSpawnResult, RemoveComponentParams, ReparentEntityParams, ReparentEntityResult,
+            SceneLoadParams, SceneNewParams, SceneOperationResult, SceneSaveParams,
+            SetComponentParams, SetViewportModeParams, SetViewportModeResult, SpawnPresetParams,
+            SpawnPresetResult, WorldTreeResult, METHOD_ASSET_CREATE_FOLDER, METHOD_ASSET_DELETE,
+            METHOD_ASSET_IMPORT, METHOD_ASSET_LIST, METHOD_ASSET_MOVE, METHOD_ASSET_RESCAN,
+            METHOD_ASSET_SPAWN_IN_VIEWPORT, METHOD_ASSET_THUMBNAIL, METHOD_ASSET_UPDATE_SETTINGS,
+            METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET,
             METHOD_ENTITY_DELETE, METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET,
             METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_PREFAB_APPLY,
             METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE, METHOD_PREFAB_SPAWN,
@@ -43,7 +56,7 @@ pub use prelude::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine_core::{EntityGuid, WorldMode};
+    use engine_core::{AssetUuid, EntityGuid, WorldMode};
 
     #[test]
     fn viewport_frame_roundtrip_and_error_cases() {
@@ -206,6 +219,7 @@ mod tests {
                     redo_len: 0,
                 },
             },
+            ServerIpcMessage::AssetsChanged { revision: 3 },
             ServerIpcMessage::Log {
                 entry: EditorLogEntry {
                     level: LogLevel::Info,
@@ -294,6 +308,37 @@ mod tests {
         let prefab_back: PrefabSaveParams =
             serde_json::from_str(&prefab_json).expect("prefab params should deserialize");
         assert_eq!(prefab_back, prefab_save);
+
+        let asset_id = AssetUuid::new();
+        let asset_rec = AssetRecord {
+            uuid: asset_id,
+            relative_path: "textures/crate.png".to_owned(),
+            name: "crate.png".to_owned(),
+            kind: AssetKind::Image,
+            file_size: 1024,
+            modified_ms: 1_700_000_000,
+            source_hash: "deadbeef".to_owned(),
+            tags: vec!["prop".to_owned()],
+            dependencies: vec![],
+            dependents: vec![],
+            sub_assets: vec![],
+            import_settings: AssetImportSettings::Image(ImageImportSettings {
+                filter_mode: TextureFilterMode::Nearest,
+                srgb: true,
+                atlas_grid: Some(AtlasGridSettings {
+                    tile_size: [32, 32],
+                    columns: 4,
+                    rows: 4,
+                    padding: [0, 0],
+                    offset: [0, 0],
+                }),
+            }),
+            has_thumbnail: false,
+        };
+        let asset_json = serde_json::to_string(&asset_rec).expect("asset record should serialize");
+        let asset_back: AssetRecord =
+            serde_json::from_str(&asset_json).expect("asset record should deserialize");
+        assert_eq!(asset_back, asset_rec);
 
         assert_eq!(
             serde_json::to_string(&ViewportCameraMode::Mode3D).unwrap(),
