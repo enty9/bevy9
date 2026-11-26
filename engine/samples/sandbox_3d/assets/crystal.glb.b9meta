@@ -1,0 +1,21 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555302"),
+    kind: gltf_model,
+    source_hash: "c28138847562c156c09ffcbea57581c85ffd9a41dddd4d992061f64ed3c44170",
+    tags: [
+        "crystal",
+        "prop",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "gltf",
+        scale: 1.0,
+        generate_normals_and_tangents: true,
+        load_meshes: true,
+        load_materials: true,
+        load_cameras: false,
+        load_lights: true,
+        load_animations: true,
+    ),
+)

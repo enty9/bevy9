@@ -14,6 +14,7 @@ default = []
 dynamic_linking = ["bevy/dynamic_linking"]
 
 [dependencies]
+engine_assets = { workspace = true }
 engine_core = { workspace = true }
 engine_protocol = { workspace = true }
 engine_scene = { workspace = true }

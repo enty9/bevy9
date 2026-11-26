@@ -1,0 +1,23 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555201"),
+    kind: image,
+    source_hash: "074b3ed838b6e06d1dd5e90756c535a928bea3471c52c9fae58bfc97ca0803a3",
+    tags: [
+        "tileset",
+        "pixel",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "image",
+        filter_mode: nearest,
+        srgb: true,
+        atlas_grid: Some((
+            tile_size: (32, 32),
+            columns: 2,
+            rows: 2,
+            padding: (0, 0),
+            offset: (0, 0),
+        )),
+    ),
+)

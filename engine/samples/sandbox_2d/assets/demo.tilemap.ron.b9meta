@@ -1,0 +1,17 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555202"),
+    kind: tilemap,
+    source_hash: "b72c5535311f66cfe5e5136b5e7621580473dd3e6479f868d0d1987103fa6dcd",
+    tags: [
+        "level",
+        "tilemap",
+    ],
+    dependencies: [
+        ("11111111-2222-4333-8444-555555555201"),
+    ],
+    import_settings: (
+        kind: "tilemap",
+        pixels_per_unit: 1.0,
+    ),
+)

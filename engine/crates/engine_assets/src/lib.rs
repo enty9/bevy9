@@ -1,16 +1,22 @@
 //! Asset management crate: UUID `.b9meta` sidecars, [`AssetRegistry`], `uuid://` source, importers, DDC, thumbnails, and file watcher.
 
+pub mod ddc;
 pub mod error;
 pub mod importers;
 pub mod meta;
 pub mod registry;
 pub mod source;
+pub mod thumbnails;
 pub mod tilemap;
 pub mod watcher;
 
 /// Commonly used types and helpers exported by `engine_assets`.
 pub mod prelude {
     pub use crate::{
+        ddc::{
+            configure_asset_plugin_for_project, configure_asset_processor_ddc_log, DdcConfig,
+            DEFAULT_DDC_SUBDIR,
+        },
         error::AssetError,
         importers::{
             build_atlas_layout_for_uuid, load_gltf_scene_by_uuid, load_image_by_uuid,
@@ -22,6 +28,7 @@ pub mod prelude {
         },
         registry::{AssetRegistry, ScanReport, SharedAssetRegistry},
         source::{register_uuid_asset_source, UuidAssetReader, UUID_ASSET_SOURCE},
+        thumbnails::{poll_thumbnails_system, ThumbnailService, THUMBNAIL_SIZE},
         tilemap::{
             load_tilemap_from_file, save_tilemap_to_file, TileMetadata, TilemapAsset,
             TilemapAssetLoader, TilemapLayer, CURRENT_TILEMAP_VERSION,
@@ -65,8 +72,24 @@ impl Plugin for EngineAssetsPlugin {
             tracing::warn!(error = %err, "initial AssetRegistry scan failed");
         }
         let shared = registry.shared();
-        app.insert_resource(shared);
+        app.insert_resource(shared.clone());
         app.insert_resource(registry);
+
+        let ddc_opt = app.world().get_resource::<DdcConfig>().cloned().or_else(|| {
+            app.world()
+                .get_resource::<ProjectPaths>()
+                .map(|p| DdcConfig::for_project_root(&p.root_dir))
+        });
+        if let Some(ddc) = ddc_opt {
+            let _ = ddc.ensure_dirs();
+            if !app.world().contains_resource::<ThumbnailService>() {
+                app.insert_resource(ThumbnailService::new(
+                    ddc.thumbnails_dir.clone(),
+                    Some(shared),
+                ));
+            }
+            app.insert_resource(ddc);
+        }
 
         let (assets_dir, scenes_dir) = app
             .world()
@@ -93,7 +116,7 @@ impl Plugin for EngineAssetsPlugin {
 
         app.add_systems(
             Update,
-            poll_asset_watcher_system.in_set(EngineSet::EditorSync),
+            (poll_asset_watcher_system, poll_thumbnails_system).in_set(EngineSet::EditorSync),
         );
     }
 }

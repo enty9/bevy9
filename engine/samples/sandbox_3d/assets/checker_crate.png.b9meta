@@ -1,0 +1,17 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555301"),
+    kind: image,
+    source_hash: "362e507705c8e407bededf09443bdd6320aafc091184ca781f1c1c071e8cd8df",
+    tags: [
+        "crate",
+        "wood",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "image",
+        filter_mode: linear,
+        srgb: true,
+        atlas_grid: None,
+    ),
+)

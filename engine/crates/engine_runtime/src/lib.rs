@@ -19,6 +19,10 @@ use bevy::{
 };
 use bootstrap_preview::BootstrapPreviewPlugin;
 use clap::{Parser, ValueEnum};
+use engine_assets::{
+    configure_asset_plugin_for_project, configure_asset_processor_ddc_log,
+    register_uuid_asset_source, EngineAssetsPlugin, SharedAssetRegistry,
+};
 use engine_core::{EngineCorePlugin, ProjectManifest, ProjectPaths, WorldMode};
 use engine_editor_bridge::{
     EditorBridgeConfig, EditorBridgePlugin, EditorIpcServer, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT,
@@ -138,31 +142,47 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
 
     let mode = cli.effective_mode();
     let world_mode = cli.world_mode.unwrap_or(manifest.project.default_mode);
-    let asset_file_path = match &paths {
-        Some(project_paths) => {
-            let resolved = std::fs::canonicalize(&project_paths.assets_dir)
-                .or_else(|_| std::path::absolute(&project_paths.assets_dir))?;
-            resolved.to_string_lossy().into_owned()
-        }
-        None => "assets".to_owned(),
-    };
+    let enable_processor = mode != RuntimeMode::Headless;
+    let shared_registry = paths.as_ref().map_or_else(
+        SharedAssetRegistry::default,
+        |project_paths| {
+            SharedAssetRegistry::new(
+                project_paths.assets_dir.clone(),
+                Some(project_paths.scenes_dir.clone()),
+            )
+        },
+    );
 
-    let asset_plugin = AssetPlugin {
-        file_path: asset_file_path,
-        // Keep AssetProcessor disabled until the DDC stage to avoid generating
-        // `imported_assets/` directories in sample projects or test working directories.
-        use_asset_processor_override: Some(false),
-        ..Default::default()
+    let (asset_plugin, ddc_config) = match &paths {
+        Some(project_paths) => {
+            let (plugin, ddc) = configure_asset_plugin_for_project(project_paths, enable_processor);
+            (plugin, Some(ddc))
+        }
+        None => (
+            AssetPlugin {
+                file_path: "assets".to_owned(),
+                use_asset_processor_override: Some(false),
+                ..Default::default()
+            },
+            None,
+        ),
     };
 
     let mut app = App::new();
     app.insert_resource(mode)
         .insert_resource(world_mode)
-        .insert_resource(manifest.clone());
+        .insert_resource(manifest.clone())
+        .insert_resource(shared_registry.clone());
+
+    if let Some(ddc) = &ddc_config {
+        app.insert_resource(ddc.clone());
+    }
 
     if let Some(project_paths) = paths {
         app.insert_resource(project_paths);
     }
+
+    register_uuid_asset_source(&mut app, shared_registry);
 
     match mode {
         RuntimeMode::Headless => {
@@ -232,6 +252,10 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
                 app.add_plugins(plugins.disable::<LogPlugin>());
             }
 
+            if let Some(ddc) = &ddc_config {
+                configure_asset_processor_ddc_log(&mut app, ddc);
+            }
+
             if mode == RuntimeMode::Editor {
                 // Keep the main loop ticking at 60 Hz when 0 native OS windows exist.
                 app.insert_resource(WinitSettings {
@@ -252,7 +276,7 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
         });
     }
 
-    app.add_plugins(EngineScenePlugin);
+    app.add_plugins((EngineAssetsPlugin, EngineScenePlugin));
 
     if let Some(scene_path) = startup_scene_path {
         load_level_from_file(app.world_mut(), &scene_path)?;

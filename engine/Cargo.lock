@@ -2780,6 +2780,7 @@ dependencies = [
  "anyhow",
  "bevy",
  "clap",
+ "engine_assets",
  "engine_core",
  "engine_editor_bridge",
  "engine_protocol",
