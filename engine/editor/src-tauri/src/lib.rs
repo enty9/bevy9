@@ -70,6 +70,12 @@ async fn restart_engine_host(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.set_zoom(1.0);
+            }
+            Ok(())
+        })
         .manage(EngineSupervisor::new())
         .invoke_handler(tauri::generate_handler![
             list_sample_projects,

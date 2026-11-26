@@ -1,131 +1,119 @@
-# [![Bevy](https://bevy.org/assets/bevy_logo_light_dark_and_dimmed.svg)](https://bevy.org)
+# Bevy9 Engine & Editor
 
-[![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](https://github.com/bevyengine/bevy#license)
-[![Crates.io](https://img.shields.io/crates/v/bevy.svg)](https://crates.io/crates/bevy)
-[![Downloads](https://img.shields.io/crates/d/bevy.svg)](https://crates.io/crates/bevy)
-[![Docs](https://docs.rs/bevy/badge.svg)](https://docs.rs/bevy/latest/bevy/)
-[![Discord](https://img.shields.io/discord/691052431525675048.svg?label=&logo=discord&logoColor=ffffff&color=7389D8&labelColor=6A7EC2)](https://discord.gg/bevy)
+2D/3D игровой движок и десктопный визуальный редактор на базе **Rust + Bevy** (`0.20.0-dev` в корне репозитория), **Bevy Remote Protocol (BRP + WebSocket IPC)** и **Tauri v2 + React/TypeScript**.
 
-## What is Bevy?
+> Подробная архитектура и поэтапная дорожная карта находятся в [PLAN.md](./PLAN.md).
 
-Bevy is a refreshingly simple data-driven game engine built in Rust. It is free and open-source forever!
+---
 
-## WARNING
+## Возможности (реализовано на текущий момент)
 
-Bevy is still in the early stages of development. Important features are missing. Documentation is sparse. A new version of Bevy containing breaking changes to the API is released [approximately once every 3 months](https://bevy.org/news/bevy-0-6/#the-train-release-schedule). We provide [migration guides](https://bevy.org/learn/migration-guides/), but we can't guarantee migrations will always be easy. Use only if you are willing to work in this environment.
+- **Ядро и проекты (`engine_core`, `engine_runtime`)**
+  - Манифест проекта `project.toml`, `ProjectPaths` (`assets/`, `scenes/`, `scripts/`), стабильные `EntityGuid` и `AssetUuid`, режимы `2d` / `3d` / `hybrid`.
+  - Запуск runtime в режимах `--headless`, обычном окне (`Window`) и хосте редактора (`Editor`).
+- **Сериализация сцен и префабов (`engine_scene`)**
+  - Версионированный формат `.level.ron` для 2D/3D-сцен, описателей примитивов, PBR-материалов, спрайтов, света, камер, `SceneGltfModel` и `SceneTilemap`.
+  - Многоразовые префабы `.prefab.ron` (`PrefabInstance` / `PrefabMember`) с отслеживанием переопределений, `Apply` и `Revert`.
+- **Ресурсы, кэш и 2D/3D-импорт (`engine_assets`)**
+  - Индексация `assets/` в `AssetRegistry` и сохранение стабильных UUID и настроек импорта в sidecar-файлах `*.b9meta` (BLAKE3-хэши, граф зависимостей, безопасное перемещение и удаление, кастомный `uuid://` источник и file watcher).
+  - Поддержка 2D-текстур (`Linear`/`Nearest`, sRGB, спрайт-атласы `TextureAtlasLayout`), 3D `glTF`/`.glb` и 2D тайлмапов `.tilemap.ron` (`TilemapAsset`).
+  - Локальный Derived Data Cache в `.cache/ddc/` (`processed/`, `thumbnails/`, `processor.log`) с асинхронной генерацией 128×128 PNG-миниатюр.
+- **Редактор Tauri v2 + React (`engine/editor`)**
+  - Потоковый **Offscreen Viewport** через RGBA8-буфер по WebSocket IPC + отсоединяемый **Native Window** режим, 3D/2D навигация камеры, GPU/raycast picking и `W`/`E`/`R` гизмо (`World`/`Local`, snap-шаги).
+  - **World Outliner** (иерархия, поиск, Drag-and-Drop переподчинение, пресеты и префабы), **Inspector** по схеме Bevy `registry.schema`, **Undo/Redo** (`Ctrl+Z` / `Ctrl+Y`).
+  - **Content Browser** (папки, фильтры, миниатюры, настройки импорта, импорт кнопкой и OS Drag-and-Drop, перетаскивание ассетов во Viewport и в поля `AssetUuid` в Inspector).
 
-**MSRV:** Bevy relies heavily on improvements in the Rust language and compiler.
-As a result, the Minimum Supported Rust Version (MSRV) is generally close to "the latest stable release" of Rust.
+---
 
-## Design Goals
+## Структура репозитория
 
-* **Capable**: Offer a complete 2D and 3D feature set
-* **Simple**: Easy for newbies to pick up, but infinitely flexible for power users
-* **Data Focused**: Data-oriented architecture using the Entity Component System paradigm
-* **Modular**: Use only what you need. Replace what you don't like
-* **Fast**: App logic should run quickly, and when possible, in parallel
-* **Productive**: Changes should compile quickly ... waiting isn't fun
-
-## About
-
-* **[Features](https://bevy.org):** A quick overview of Bevy's features.
-* **[News](https://bevy.org/news/)**: A development blog that covers our progress, plans and shiny new features.
-
-## Docs
-
-* **[Quick Start Guide](https://bevy.org/learn/quick-start/introduction):** Bevy's official Quick Start Guide. The best place to start learning Bevy.
-* **[Bevy Rust API Docs](https://docs.rs/bevy):** Bevy's Rust API docs, which are automatically generated from the doc comments in this repo.
-* **[Official Examples](https://github.com/bevyengine/bevy/tree/latest/examples):** Bevy's dedicated, runnable examples, which are great for digging into specific concepts.
-* **[Community-Made Learning Resources](https://bevy.org/assets/#learning)**: More tutorials, documentation, and examples made by the Bevy community.
-
-## Community
-
-Before contributing or participating in discussions with the community, you should familiarize yourself with our [**Code of Conduct**](./CODE_OF_CONDUCT.md).
-
-* **[Discord](https://discord.gg/bevy):** Bevy's official discord server.
-* **[Reddit](https://reddit.com/r/bevy):** Bevy's official subreddit.
-* **[GitHub Discussions](https://github.com/bevyengine/bevy/discussions):** The best place for questions about Bevy, answered right here!
-* **[Bevy Assets](https://bevy.org/assets/):** A collection of awesome Bevy projects, tools, plugins and learning materials.
-
-### Contributing
-
-If you'd like to help build Bevy, check out the **[Contributor's Guide](https://bevy.org/learn/contribute/introduction)**.
-For simple problems, feel free to [open an issue](https://github.com/bevyengine/bevy/issues) or
-[PR](https://github.com/bevyengine/bevy/pulls) and tackle it yourself!
-
-For more complex architecture decisions and experimental mad science, please open a [GitHub Discussion](https://github.com/bevyengine/bevy/discussions) so we can brainstorm together effectively!
-
-## Getting Started
-
-We recommend checking out the [Quick Start Guide](https://bevy.org/learn/quick-start/introduction) for a brief introduction.
-
-Follow the [Setup guide](https://bevy.org/learn/quick-start/getting-started/setup) to ensure your development environment is set up correctly.
-Once set up, you can quickly try out the [examples](https://github.com/bevyengine/bevy/tree/latest/examples) by cloning this repo and running the following commands:
-
-```sh
-# Switch to the correct version (latest release, default is main development branch)
-git checkout latest
-# Runs the "breakout" example
-cargo run --example breakout
+```text
+bevy9/
+├── crates/bevy_*             # Модули upstream Bevy (используются по path-зависимостям без правок)
+├── PLAN.md                   # Архитектурная дорожная карта проекта
+└── engine/                   # Изолированный workspace Bevy9 Engine & Editor
+    ├── Cargo.toml
+    ├── crates/
+    │   ├── engine_core/          # Идентификаторы EntityGuid/AssetUuid, ProjectManifest, расписание EngineSet
+    │   ├── engine_protocol/      # JSON-RPC (BRP) контракты, WebSocket IPC сообщения и бинарный фрейм-кодек
+    │   ├── engine_assets/        # AssetRegistry, *.b9meta, importers, TilemapAsset, .cache/ddc, ThumbnailService
+    │   ├── engine_scene/         # .level.ron, .prefab.ron, 2D/3D/glTF/Tilemap описатели и гидратация
+    │   ├── engine_render/        # Offscreen render-target readback, камеры редактора, picking, 2D/3D gizmos
+    │   ├── engine_editor_bridge/ # Кастомные BRP-методы engine.* и WebSocket IPC сервер
+    │   └── engine_runtime/       # Бинарник движка (Headless / Window / Editor Host)
+    ├── editor/
+    │   ├── src-tauri/            # Tauri v2 оболочка и супервизор процесса engine_runtime
+    │   └── ui/                   # React + TypeScript UI редактора (Vite)
+    └── samples/
+        ├── sandbox_3d/           # Демо 3D-проекта (шахматная текстура, .glb кристалл, сцена main.level.ron)
+        └── sandbox_2d/           # Демо 2D-проекта (пиксель-арт тайлсет 2x2, .tilemap.ron, 2D сцена)
 ```
 
-To draw a window with standard functionality enabled, use:
+---
 
-```rust
-use bevy::prelude::*;
+## Быстрый старт
 
-fn main() {
-    App::new()
-        .add_plugins(DefaultPlugins)
-        .run();
-}
+### Требования
+
+- **Rust** (stable toolchain согласно `rust-version` в [engine/Cargo.toml](engine/Cargo.toml)) + `cargo-tauri` (`cargo install tauri-cli` при необходимости)
+- **Node.js** и **pnpm**
+- **Linux**: системные пакеты для Bevy (Vulkan/Wayland/X11/ALSA) и Tauri (`webkit2gtk-4.1`, `gtk3`, `librsvg`)
+
+### Установка зависимостей UI
+
+```bash
+pnpm --dir engine/editor/ui install
 ```
 
-### Fast Compiles
+### Запуск визуального редактора (Tauri v2)
 
-Bevy can be built just fine using default configuration on stable Rust. However for really fast iterative compiles, you should enable the "fast compiles" setup by [following the instructions here](https://bevy.org/learn/quick-start/getting-started/setup).
+```bash
+cd engine/editor/src-tauri && cargo tauri dev
+```
 
-## [Bevy Cargo Features][cargo_features]
+Редактор автоматически соберёт/запустит `engine_runtime` как дочерний Editor Host и откроет проект из `engine/samples/`. Переключаться между `sandbox_3d`, `sandbox_2d` или открыть произвольный проект с `project.toml` можно прямо из верхней панели.
 
-This [list][cargo_features] outlines the different cargo features supported by Bevy. These allow you to customize the Bevy feature set for your use-case.
+### Запуск standalone `engine_runtime`
 
-[cargo_features]: docs/cargo_features.md
+```bash
+# 3D-сцена в окне
+cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engine/samples/sandbox_3d
 
-## Thanks
+# 2D-сцена в окне
+cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engine/samples/sandbox_2d
 
-Bevy is the result of the hard work of many people. A huge thanks to all Bevy contributors, the many open source projects that have come before us, the [Rust gamedev ecosystem](https://arewegameyet.rs/), and the many libraries we build on.
+# Headless прогон нескольких кадров (для CI / smoke-проверок)
+cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engine/samples/sandbox_3d --headless --max-frames 5
+```
 
-A huge thanks to Bevy's [generous sponsors](https://bevy.org). Bevy will always be free and open source, but it isn't free to make. Please consider [sponsoring our work](https://bevy.org/donate/) if you like what we're building.
+---
 
-<!-- This next line need to stay exactly as is. It is required for BrowserStack sponsorship. -->
-This project is tested with BrowserStack.
+## Основные горячие клавиши редактора
 
-## License
+- **Viewport (3D)**: `ПКМ + WASD / Q / E` — свободный полёт, `Alt + ЛКМ` / `СКМ` — вращение/панорама, колесо мыши — зум камеры, `F` — фокус на выбранном объекте
+- **Viewport (2D)**: `ПКМ` / `СКМ` — панорамирование, колесо мыши — масштабирование камеры
+- **Трансформация**: `W` — перемещение, `E` — поворот, `R` — масштаб, `Ctrl` (удержание) — привязка к сетке
+- **Правка и файлы**: `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) — Undo / Redo, `Ctrl+S` — сохранить сцену, `Delete` — удалить выбранный узел
 
-Bevy is free, open source and permissively licensed!
-Except where noted (below and/or in individual files), all code in this repository is dual-licensed under either:
+---
 
-* MIT License ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
-* Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
+## Проверки и тесты
 
-at your option.
-This means you can select the license you prefer!
-This dual-licensing approach is the de-facto standard in the Rust ecosystem and there are [very good reasons](https://github.com/bevyengine/bevy/issues/2373) to include both.
+```bash
+# Тесты Rust workspace
+cargo test --manifest-path engine/Cargo.toml -j 2 --workspace
 
-Some of the engine's code carries additional copyright notices and license terms due to their external origins.
-These are generally BSD-like, but exact details vary by crate:
-If the README of a crate contains a 'License' header (or similar), the additional copyright notices and license terms applicable to that crate will be listed.
-The above licensing requirement still applies to contributions to those crates, and sections of those crates will carry those license terms.
-The [license](https://doc.rust-lang.org/cargo/reference/manifest.html#the-license-and-license-file-fields) field of each crate will also reflect this.
+# Линтинг без предупреждений
+cargo clippy --manifest-path engine/Cargo.toml --workspace --all-targets -- -D warnings
 
-The [assets](assets) included in this repository (for our [examples](./examples/README.md)) typically fall under different open licenses.
-These will not be included in your game (unless copied in by you), and they are not distributed in the published bevy crates.
-See [CREDITS.md](CREDITS.md) for the details of the licenses of those files.
+# Проверка Tauri-обёртки и React/TypeScript UI
+cargo check --manifest-path engine/editor/src-tauri/Cargo.toml
+pnpm --dir engine/editor/ui typecheck
+pnpm --dir engine/editor/ui build
+```
 
-### Your contributions
+---
 
-Unless you explicitly state otherwise,
-any contribution intentionally submitted for inclusion in the work by you,
-as defined in the Apache-2.0 license,
-shall be dual licensed as above,
-without any additional terms or conditions.
+## Лицензия
+
+Движок Bevy в составе репозитория распространяется под двойной лицензией **MIT / Apache-2.0** ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). Код Bevy9 под каталогом `engine/` использует ту же совместимую модель лицензирования `MIT OR Apache-2.0`.
