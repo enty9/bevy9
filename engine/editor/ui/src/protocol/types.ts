@@ -5,6 +5,22 @@ export const FRAME_HEADER_BYTES = 28;
 export type WorldMode = "2d" | "3d" | "hybrid";
 export type ViewportMode = "offscreen" | "native_window";
 export type ViewportCameraMode = "3d" | "2d";
+export type GizmoMode = "translate" | "rotate" | "scale";
+export type GizmoSpace = "world" | "local";
+
+export interface GizmoSnapConfig {
+  enabled: boolean;
+  translate_step: number;
+  translate_step_2d: number;
+  rotate_step_degrees: number;
+  scale_step: number;
+}
+
+export interface GizmoStatePayload {
+  mode: GizmoMode;
+  space: GizmoSpace;
+  snap: GizmoSnapConfig;
+}
 
 export type EntityPresetKind =
   | "empty"
@@ -115,6 +131,12 @@ export type ClientIpcMessage =
       guids: string[];
     }
   | {
+      type: "set_gizmo_state";
+      mode: GizmoMode;
+      space: GizmoSpace;
+      snap: GizmoSnapConfig;
+    }
+  | {
       type: "ping";
       nonce: number;
     };
@@ -141,6 +163,8 @@ export type ServerIpcMessage =
   | { type: "hierarchy_snapshot"; roots: SceneTreeNode[] }
   | { type: "selection_changed"; guids: string[] }
   | ({ type: "viewport_state_changed" } & ViewportStatePayload)
+  | ({ type: "gizmo_state_changed" } & GizmoStatePayload)
+  | { type: "inspector_refresh"; guids: string[] }
   | { type: "log"; entry: EditorLogEntry }
   | { type: "metrics"; metrics: FrameMetrics }
   | { type: "pong"; nonce: number }

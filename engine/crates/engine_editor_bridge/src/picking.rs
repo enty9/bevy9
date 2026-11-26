@@ -1,5 +1,7 @@
 //! Viewport 2D/3D picking, light/camera helper icons, and selection outline rendering.
 
+use std::collections::HashSet;
+
 use bevy_camera::{
     visibility::{InheritedVisibility, Visibility},
     Camera, Projection,
@@ -9,11 +11,12 @@ use bevy_ecs::{
     entity::Entity,
     hierarchy::ChildOf,
     message::MessageWriter,
-    query::{Has, With},
+    query::{Has, Or, With},
     resource::Resource,
     system::{Query, Res, ResMut},
 };
 use bevy_gizmos::gizmos::Gizmos;
+use bevy_input::{keyboard::KeyCode, ButtonInput};
 use bevy_math::{Isometry2d, Isometry3d, Quat, Vec2, Vec3, Vec3Swizzles};
 use bevy_picking::{
     backend::{ray::RayMap, HitData, PointerHits},
@@ -21,16 +24,20 @@ use bevy_picking::{
     pointer::PointerId,
     Pickable,
 };
-use bevy_transform::components::GlobalTransform;
+use bevy_transform::components::{GlobalTransform, Transform};
 use engine_core::{EntityGuid, EntityGuidMap};
-use engine_protocol::ViewportCameraMode;
+use engine_protocol::{ViewportCameraMode, ViewportMode};
 use engine_render::{
-    picking::{EditorOverlayGizmoGroup, EditorPointerState, OFFSCREEN_POINTER_ID},
+    camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
+    gizmo::{GizmoTargetSnapshot, TransformGizmoState},
+    picking::{
+        EditorOverlayGizmoGroup, EditorPointerState, ViewportFrameInput, OFFSCREEN_POINTER_ID,
+    },
     ViewportConfig,
 };
 use engine_scene::{
-    MeshPrimitive2d, MeshPrimitive3d, SceneCamera2d, SceneCamera3d, SceneDirectionalLight,
-    SceneEntity, ScenePointLight, SpriteDesc,
+    ActiveScene, MeshPrimitive2d, MeshPrimitive3d, SceneCamera2d, SceneCamera3d,
+    SceneDirectionalLight, SceneEntity, ScenePointLight, SpriteDesc,
 };
 
 use crate::selection::{BridgeDirtyFlags, EditorSelection};
@@ -195,14 +202,140 @@ pub(crate) fn helper_icon_picking_backend(
     }
 }
 
+type EditorCameraLookupFilter = Or<(With<EditorCamera3d>, With<EditorCamera2d>)>;
+
+fn collect_topmost_selected_targets(
+    selection: &EditorSelection,
+    guid_map: Option<&EntityGuidMap>,
+    transforms: &Query<(&Transform, &GlobalTransform, Option<&ChildOf>)>,
+    scene_entities: &Query<&EntityGuid, With<SceneEntity>>,
+) -> Vec<GizmoTargetSnapshot> {
+    let Some(map) = guid_map else {
+        return Vec::new();
+    };
+    let selected_set: HashSet<EntityGuid> = selection.guids().iter().copied().collect();
+    let mut targets = Vec::new();
+
+    for &guid in selection.guids() {
+        let Some(entity) = map.get_entity(guid) else {
+            continue;
+        };
+        let Ok((local_tfm, global_tfm, mut parent_opt)) = transforms.get(entity) else {
+            continue;
+        };
+
+        // Skip children when an ancestor is already selected so parent + child transforms don't double-apply.
+        let mut ancestor_selected = false;
+        let mut parent_global = None;
+        if let Some(direct_parent) = parent_opt
+            && let Ok((_, p_global, _)) = transforms.get(direct_parent.parent())
+        {
+            parent_global = Some(*p_global);
+        }
+        let mut hops = 0usize;
+        while let Some(child_of) = parent_opt {
+            if hops >= 32 {
+                break;
+            }
+            hops += 1;
+            let parent_entity = child_of.parent();
+            if let Ok(&p_guid) = scene_entities.get(parent_entity)
+                && selected_set.contains(&p_guid)
+            {
+                ancestor_selected = true;
+                break;
+            }
+            parent_opt = transforms
+                .get(parent_entity)
+                .ok()
+                .and_then(|(_, _, next)| next);
+        }
+
+        if ancestor_selected {
+            continue;
+        }
+
+        targets.push(GizmoTargetSnapshot {
+            guid,
+            entity,
+            local_transform: *local_tfm,
+            global_transform: *global_tfm,
+            parent_global,
+        });
+    }
+
+    targets
+}
+
+/// Processes gizmo `W`/`E`/`R` shortcuts and interactive 3D/2D transform handle drags.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Coordinates shortcuts, active camera projection, pointer ray, and hierarchy targets"
+)]
+pub(crate) fn update_transform_gizmos_system(
+    config: Res<ViewportConfig>,
+    camera_state: Res<EditorCameraState>,
+    frame_input: Res<ViewportFrameInput>,
+    pointer_state: Res<EditorPointerState>,
+    selection: Res<EditorSelection>,
+    guid_map: Option<Res<EntityGuidMap>>,
+    mut gizmo_state: ResMut<TransformGizmoState>,
+    mut active_scene: Option<ResMut<ActiveScene>>,
+    native_keys: Option<Res<ButtonInput<KeyCode>>>,
+    cameras: Query<(&Camera, &Projection, &GlobalTransform), EditorCameraLookupFilter>,
+    mut transforms: Query<(&mut Transform, &GlobalTransform, Option<&ChildOf>)>,
+    scene_entities: Query<&EntityGuid, With<SceneEntity>>,
+) {
+    let rmb_held = pointer_state.right_down || camera_state.is_right_down();
+    gizmo_state.apply_shortcuts(
+        &frame_input.events,
+        native_keys.as_deref(),
+        rmb_held,
+        config.mode == ViewportMode::NativeWindow,
+    );
+
+    let targets = {
+        let ro_transforms = transforms.as_readonly();
+        collect_topmost_selected_targets(&selection, guid_map.as_deref(), &ro_transforms, &scene_entities)
+    };
+
+    let active_cam = pointer_state
+        .active_camera
+        .and_then(|cam_e| cameras.get(cam_e).ok())
+        .or_else(|| cameras.iter().find(|(cam, _, _)| cam.is_active));
+
+    let updates = gizmo_state.update_interaction(
+        config.camera_mode,
+        active_cam,
+        &pointer_state,
+        &targets,
+    );
+
+    if !updates.is_empty() {
+        for (entity, next_tfm) in updates {
+            if let Ok((mut tfm, _, _)) = transforms.get_mut(entity) {
+                *tfm = next_tfm;
+            }
+        }
+        if let Some(scene) = active_scene.as_deref_mut() {
+            scene.dirty = true;
+        }
+    } else if !gizmo_state.inspector_refresh_guids.is_empty()
+        && let Some(scene) = active_scene.as_deref_mut()
+    {
+        scene.dirty = true;
+    }
+}
+
 /// Resolves hovered scene entities from `HoverMap` and updates [`EditorSelection`] on clean clicks.
 #[expect(
     clippy::too_many_arguments,
-    reason = "Synchronizes HoverMap, pointer clicks, EntityGuidMap pruning, and dirty IPC flags"
+    reason = "Synchronizes HoverMap, gizmo click guard, pointer clicks, EntityGuidMap pruning, and IPC flags"
 )]
 pub(crate) fn handle_viewport_selection_picking(
     guid_map: Option<Res<EntityGuidMap>>,
     pointer_state: Res<EditorPointerState>,
+    gizmo_state: Option<Res<TransformGizmoState>>,
     hover_map: Option<Res<HoverMap>>,
     mut selection: ResMut<EditorSelection>,
     mut hovered: ResMut<EditorHoveredEntity>,
@@ -251,6 +384,13 @@ pub(crate) fn handle_viewport_selection_picking(
 
     let hovered_guid = top_hovered.map(|(_, guid)| guid);
     hovered.guid = hovered_guid;
+
+    if gizmo_state
+        .as_deref()
+        .is_some_and(|g| g.consumed_pointer_click || g.is_dragging())
+    {
+        return;
+    }
 
     let clean_left_click = pointer_state.left_just_released
         && !pointer_state.right_down
@@ -305,7 +445,7 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
     mut gizmos: Gizmos<EditorOverlayGizmoGroup>,
     entities: Query<SceneOverlayItem<'_>, With<SceneEntity>>,
     vis_query: Query<(&Visibility, Option<&ChildOf>)>,
-    cam3d_query: Query<&GlobalTransform, With<engine_render::EditorCamera3d>>,
+    cam3d_query: Query<&GlobalTransform, With<EditorCamera3d>>,
 ) {
     let selected_color = Color::srgb(1.0, 0.62, 0.12);
     let hover_color = Color::srgba(0.45, 0.85, 1.0, 0.85);
@@ -603,4 +743,35 @@ fn draw_camera_3d_frustum(
     gizmos.line(bl, tl, color);
     gizmos.line(tl + up * (scale * 0.25), far_center + h + up * (scale * 0.55), color);
     gizmos.line(far_center + h + up * (scale * 0.55), tr + up * (scale * 0.25), color);
+}
+
+/// Renders active 3D or 2D transform gizmo handles for top-most selected scene entities.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_transform_gizmos_system(
+    config: Res<ViewportConfig>,
+    selection: Res<EditorSelection>,
+    guid_map: Option<Res<EntityGuidMap>>,
+    gizmo_state: Res<TransformGizmoState>,
+    mut gizmos: Gizmos<EditorOverlayGizmoGroup>,
+    cameras: Query<(&Camera, &Projection, &GlobalTransform), EditorCameraLookupFilter>,
+    transforms: Query<(&Transform, &GlobalTransform, Option<&ChildOf>)>,
+    scene_entities: Query<&EntityGuid, With<SceneEntity>>,
+) {
+    let targets = collect_topmost_selected_targets(
+        &selection,
+        guid_map.as_deref(),
+        &transforms,
+        &scene_entities,
+    );
+    if targets.is_empty() {
+        return;
+    }
+
+    let active_cam = cameras.iter().find(|(cam, _, _)| cam.is_active);
+    let cam_proj = active_cam.map(|(_, p, _)| p);
+    let cam_pos = active_cam
+        .map(|(_, _, g)| g.translation())
+        .unwrap_or(Vec3::ZERO);
+
+    gizmo_state.draw(&mut gizmos, config.camera_mode, cam_proj, cam_pos, &targets);
 }

@@ -1,6 +1,7 @@
 //! 2D/3D editor cameras, procedural grids, and dual Offscreen/NativeWindow `ViewportTransport`.
 
 pub mod camera;
+pub mod gizmo;
 pub mod grid;
 pub mod picking;
 pub mod viewport;
@@ -9,6 +10,7 @@ pub mod viewport;
 pub mod prelude {
     pub use crate::{
         camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
+        gizmo::{GizmoHandle, GizmoTargetSnapshot, GizmoTransformCommit, TransformGizmoState},
         picking::{
             EditorOverlayGizmoGroup, EditorPointerState, ViewportFrameInput,
             ViewportInputCaptureSet, OFFSCREEN_POINTER_ID,
@@ -25,7 +27,7 @@ pub mod prelude {
 use bevy_app::{App, Plugin, PreUpdate, Startup, Update};
 use bevy_ecs::{
     message::Messages,
-    schedule::{common_conditions::resource_exists, IntoScheduleConfigs},
+    schedule::{common_conditions::resource_exists, IntoScheduleConfigs, SystemSet},
 };
 use bevy_gizmos::{
     config::{GizmoConfig, GizmoConfigStore, GizmoLineConfig},
@@ -40,6 +42,10 @@ use engine_core::{schedule::EngineSet, WorldMode};
 use engine_protocol::ViewportCameraMode;
 
 pub use prelude::*;
+
+/// System set containing editor camera, viewport resize, and transport synchronization systems.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EditorCameraSystems;
 
 /// Plugin setting up 2D/3D editor cameras, reference grids, picking input, and `ViewportTransport`.
 #[derive(Debug, Default, Clone, Copy)]
@@ -73,6 +79,7 @@ impl Plugin for EngineRenderPlugin {
         }
 
         app.init_resource::<EditorCameraState>()
+            .init_resource::<TransformGizmoState>()
             .init_resource::<ViewportFrameChannel>()
             .init_resource::<ViewportInputQueue>()
             .init_resource::<ViewportFrameInput>()
@@ -109,6 +116,7 @@ impl Plugin for EngineRenderPlugin {
                     viewport::sync_viewport_transport,
                 )
                     .chain()
+                    .in_set(EditorCameraSystems)
                     .in_set(EngineSet::EditorSync),
             )
             .add_systems(

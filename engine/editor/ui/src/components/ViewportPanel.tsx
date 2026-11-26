@@ -6,10 +6,21 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { ExternalLink, Monitor } from "lucide-react";
+import {
+  ChevronDown,
+  ExternalLink,
+  Magnet,
+  Maximize2,
+  Monitor,
+  Move,
+  RotateCw,
+} from "lucide-react";
 import type { IpcConnectionState } from "../protocol/ipcClient";
 import type {
   DecodedViewportFrame,
+  GizmoMode,
+  GizmoSnapConfig,
+  GizmoStatePayload,
   InputModifiers,
   PointerButtonCode,
   ViewportCameraMode,
@@ -26,9 +37,11 @@ interface ViewportPanelProps {
   width: number;
   height: number;
   ipcState: IpcConnectionState;
+  gizmoState: GizmoStatePayload;
   subscribeFrames: FrameSubscriber;
   onViewportInput: (event: ViewportInputEvent) => void;
   onToggleViewportMode: () => void;
+  onChangeGizmoState: (next: GizmoStatePayload) => void;
 }
 
 function clampDim(value: number): number {
@@ -69,12 +82,15 @@ export function ViewportPanel({
   width,
   height,
   ipcState,
+  gizmoState,
   subscribeFrames,
   onViewportInput,
   onToggleViewportMode,
+  onChangeGizmoState,
 }: ViewportPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const snapMenuRef = useRef<HTMLDivElement | null>(null);
   const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const latestFrameRef = useRef<DecodedViewportFrame | null>(null);
   const dirtyFrameRef = useRef(false);
@@ -85,10 +101,68 @@ export function ViewportPanel({
   onViewportInputRef.current = onViewportInput;
 
   const [hasFrame, setHasFrame] = useState(false);
+  const [snapPopoverOpen, setSnapPopoverOpen] = useState(false);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({
     width,
     height,
   });
+
+  useEffect(() => {
+    if (!snapPopoverOpen) {
+      return;
+    }
+    function handleOutsidePointer(event: PointerEvent) {
+      if (
+        snapMenuRef.current &&
+        event.target instanceof Node &&
+        !snapMenuRef.current.contains(event.target)
+      ) {
+        setSnapPopoverOpen(false);
+      }
+    }
+    window.addEventListener("pointerdown", handleOutsidePointer);
+    return () => {
+      window.removeEventListener("pointerdown", handleOutsidePointer);
+    };
+  }, [snapPopoverOpen]);
+
+  function setGizmoMode(mode: GizmoMode) {
+    onChangeGizmoState({ ...gizmoState, mode });
+  }
+
+  function toggleGizmoSpace() {
+    onChangeGizmoState({
+      ...gizmoState,
+      space: gizmoState.space === "world" ? "local" : "world",
+    });
+  }
+
+  function toggleSnapEnabled() {
+    onChangeGizmoState({
+      ...gizmoState,
+      snap: {
+        ...gizmoState.snap,
+        enabled: !gizmoState.snap.enabled,
+      },
+    });
+  }
+
+  function updateSnapNumber(
+    field: Exclude<keyof GizmoSnapConfig, "enabled">,
+    rawValue: string,
+  ) {
+    const parsed = Number(rawValue);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return;
+    }
+    onChangeGizmoState({
+      ...gizmoState,
+      snap: {
+        ...gizmoState.snap,
+        [field]: parsed,
+      },
+    });
+  }
 
   // Subscribe to direct frame callbacks and paint inside requestAnimationFrame.
   useEffect(() => {
@@ -363,28 +437,151 @@ export function ViewportPanel({
           </span>
         </div>
 
-        <button
-          type="button"
-          disabled={ipcState !== "connected"}
-          title={
-            viewportMode === "offscreen"
-              ? "Detach viewport into a native Bevy OS window"
-              : "Attach viewport back inside the editor canvas"
-          }
-          onClick={onToggleViewportMode}
-        >
-          {viewportMode === "offscreen" ? (
-            <>
-              <ExternalLink size={13} />
-              Detach
-            </>
-          ) : (
-            <>
-              <Monitor size={13} />
-              Attach
-            </>
+        <div className="gizmo-bar">
+          <div className="segmented" role="group" aria-label="Transform Gizmo Mode">
+            <button
+              type="button"
+              className={gizmoState.mode === "translate" ? "seg-btn active" : "seg-btn"}
+              title="Move Gizmo (W)"
+              onClick={() => setGizmoMode("translate")}
+            >
+              <Move size={12} /> Move
+            </button>
+            <button
+              type="button"
+              className={gizmoState.mode === "rotate" ? "seg-btn active" : "seg-btn"}
+              title="Rotate Gizmo (E)"
+              onClick={() => setGizmoMode("rotate")}
+            >
+              <RotateCw size={12} /> Rotate
+            </button>
+            <button
+              type="button"
+              className={gizmoState.mode === "scale" ? "seg-btn active" : "seg-btn"}
+              title="Scale Gizmo (R)"
+              onClick={() => setGizmoMode("scale")}
+            >
+              <Maximize2 size={12} /> Scale
+            </button>
+          </div>
+
+          {cameraMode === "3d" && (
+            <button
+              type="button"
+              className={gizmoState.space === "local" ? "primary" : ""}
+              title="Toggle World / Local transform space"
+              onClick={toggleGizmoSpace}
+            >
+              {gizmoState.space === "local" ? "Local" : "World"}
+            </button>
           )}
-        </button>
+
+          <div ref={snapMenuRef} className="popover-anchor">
+            <div className="segmented">
+              <button
+                type="button"
+                className={gizmoState.snap.enabled ? "seg-btn active" : "seg-btn"}
+                title="Toggle grid/angle/scale snapping (Ctrl holds temporary snap)"
+                onClick={toggleSnapEnabled}
+              >
+                <Magnet size={12} /> Snap
+              </button>
+              <button
+                type="button"
+                className={snapPopoverOpen ? "seg-btn active" : "seg-btn"}
+                title="Configure snap increments"
+                onClick={() => setSnapPopoverOpen((open) => !open)}
+              >
+                <ChevronDown size={12} />
+              </button>
+            </div>
+
+            {snapPopoverOpen && (
+              <div className="popover-card gizmo-snap-popover">
+                <div className="popover-title">Gizmo Snapping</div>
+                <label className="option-toggle">
+                  <input
+                    type="checkbox"
+                    checked={gizmoState.snap.enabled}
+                    onChange={toggleSnapEnabled}
+                  />
+                  <span>Enable Snap</span>
+                </label>
+                <label className="snap-row">
+                  <span>Move 3D (m)</span>
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.1}
+                    value={gizmoState.snap.translate_step}
+                    onChange={(e) =>
+                      updateSnapNumber("translate_step", e.target.value)
+                    }
+                  />
+                </label>
+                <label className="snap-row">
+                  <span>Move 2D (px)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={gizmoState.snap.translate_step_2d}
+                    onChange={(e) =>
+                      updateSnapNumber("translate_step_2d", e.target.value)
+                    }
+                  />
+                </label>
+                <label className="snap-row">
+                  <span>Rotate (deg)</span>
+                  <input
+                    type="number"
+                    min={1}
+                    step={5}
+                    value={gizmoState.snap.rotate_step_degrees}
+                    onChange={(e) =>
+                      updateSnapNumber("rotate_step_degrees", e.target.value)
+                    }
+                  />
+                </label>
+                <label className="snap-row">
+                  <span>Scale</span>
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.05}
+                    value={gizmoState.snap.scale_step}
+                    onChange={(e) =>
+                      updateSnapNumber("scale_step", e.target.value)
+                    }
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            disabled={ipcState !== "connected"}
+            title={
+              viewportMode === "offscreen"
+                ? "Detach viewport into a native Bevy OS window"
+                : "Attach viewport back inside the editor canvas"
+            }
+            onClick={onToggleViewportMode}
+          >
+            {viewportMode === "offscreen" ? (
+              <>
+                <ExternalLink size={13} />
+                Detach
+              </>
+            ) : (
+              <>
+                <Monitor size={13} />
+                Attach
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       <div ref={containerRef} className="viewport-container">
@@ -415,8 +612,8 @@ export function ViewportPanel({
 
             <div className="viewport-overlay-legend">
               {cameraMode === "3d"
-                ? "3D: LMB Select · Ctrl/Shift Multi · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
-                : "2D: LMB Select · Ctrl/Shift Multi · RMB/MMB Pan · Wheel Zoom"}
+                ? "3D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
+                : "2D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB/MMB Pan · Wheel Zoom"}
             </div>
           </>
         ) : (

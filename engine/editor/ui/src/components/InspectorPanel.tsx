@@ -22,6 +22,7 @@ interface InspectorPanelProps {
   selectedCount: number;
   brpClient: BrpClient | null;
   registrySchema: BrpRegistrySchema | null;
+  inspectorRevision?: number;
   onComponentChanged: (refreshTree: boolean) => void;
   onDeleteEntity: (node: SceneTreeNode) => void;
   onCollapse: () => void;
@@ -32,6 +33,7 @@ export function InspectorPanel({
   selectedCount,
   brpClient,
   registrySchema,
+  inspectorRevision = 0,
   onComponentChanged,
   onDeleteEntity,
   onCollapse,
@@ -146,8 +148,9 @@ export function InspectorPanel({
   }, [selectedNode, brpClient, visibleComponentPaths]);
 
   useEffect(() => {
+    void inspectorRevision;
     void fetchComponentValues();
-  }, [fetchComponentValues]);
+  }, [fetchComponentValues, inspectorRevision]);
 
   const addableComponents = useMemo(() => {
     if (!registrySchema || !selectedNode) {

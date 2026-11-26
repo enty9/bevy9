@@ -979,3 +979,31 @@ button.ghost-btn:hover:not(:disabled) {
   overflow: auto;
   max-height: 140px;
 }
+
+.gizmo-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gizmo-snap-popover {
+  right: 0;
+  left: auto;
+  width: 220px;
+}
+
+.snap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.snap-row input {
+  width: 82px;
+  padding: 3px 6px;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+}

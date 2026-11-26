@@ -27,11 +27,12 @@ use bevy_time::Time;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use engine_core::{ProjectManifest, WorldMode};
 use engine_protocol::{
-    encode_viewport_frame, ClientIpcMessage, FrameMetrics, ServerIpcMessage, ViewportCameraMode,
-    ViewportMode, PROTOCOL_VERSION,
+    encode_viewport_frame, ClientIpcMessage, FrameMetrics, GizmoMode, GizmoSnapConfig,
+    GizmoSpace, ServerIpcMessage, ViewportCameraMode, ViewportMode, PROTOCOL_VERSION,
 };
 use engine_render::{
-    ViewportConfig, ViewportFrameChannel, ViewportFramePacket, ViewportInputQueue,
+    gizmo::TransformGizmoState, ViewportConfig, ViewportFrameChannel, ViewportFramePacket,
+    ViewportInputQueue,
 };
 use engine_scene::{build_scene_tree, ActiveScene, SceneEntity};
 use tungstenite::{accept, Message};
@@ -403,6 +404,18 @@ pub(crate) fn process_ipc_inbound(world: &mut World) {
                     dirty.selection_dirty = true;
                 }
             }
+            ClientIpcMessage::SetGizmoState { mode, space, snap } => {
+                if let Some(mut gizmo) = world.get_resource_mut::<TransformGizmoState>() {
+                    let changed =
+                        gizmo.mode != mode || gizmo.space != space || gizmo.snap != snap;
+                    gizmo.mode = mode;
+                    gizmo.space = space;
+                    gizmo.snap = snap;
+                    if changed {
+                        gizmo.state_dirty = true;
+                    }
+                }
+            }
             ClientIpcMessage::Ping { nonce } => {
                 if let Some(ipc) = world.get_resource::<EditorIpcServer>() {
                     ipc.send_to(client_id, &ServerIpcMessage::Pong { nonce });
@@ -446,6 +459,13 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
                 720,
             ),
             |cfg| (cfg.mode, cfg.camera_mode, cfg.width, cfg.height),
+        );
+
+    let (gizmo_mode, gizmo_space, gizmo_snap) = world
+        .get_resource::<TransformGizmoState>()
+        .map_or_else(
+            || (GizmoMode::default(), GizmoSpace::default(), GizmoSnapConfig::default()),
+            |g| (g.mode, g.space, g.snap),
         );
 
     let selection = world
@@ -496,6 +516,14 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
             height,
         },
     );
+    ipc.send_to(
+        client_id,
+        &ServerIpcMessage::GizmoStateChanged {
+            mode: gizmo_mode,
+            space: gizmo_space,
+            snap: gizmo_snap,
+        },
+    );
 }
 
 pub(crate) fn publish_ipc_updates(world: &mut World) {
@@ -517,6 +545,22 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
         } else {
             (false, false, false)
         };
+
+    let gizmo_update = world
+        .get_resource_mut::<TransformGizmoState>()
+        .and_then(|mut gizmo| {
+            if gizmo.state_dirty {
+                gizmo.state_dirty = false;
+                Some((gizmo.mode, gizmo.space, gizmo.snap))
+            } else {
+                None
+            }
+        });
+
+    let refresh_guids = world
+        .get_resource_mut::<TransformGizmoState>()
+        .map(|mut gizmo| core::mem::take(&mut gizmo.inspector_refresh_guids))
+        .unwrap_or_default();
 
     let latest_packet = drain_latest_viewport_frame(world);
 
@@ -566,6 +610,20 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
                 });
             }
         }
+    }
+
+    if let Some((mode, space, snap)) = gizmo_update
+        && let Some(ipc) = world.get_resource::<EditorIpcServer>()
+    {
+        ipc.broadcast_message(&ServerIpcMessage::GizmoStateChanged { mode, space, snap });
+    }
+
+    if !refresh_guids.is_empty()
+        && let Some(ipc) = world.get_resource::<EditorIpcServer>()
+    {
+        ipc.broadcast_message(&ServerIpcMessage::InspectorRefresh {
+            guids: refresh_guids,
+        });
     }
 
     if let Some(packet) = latest_packet {

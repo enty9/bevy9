@@ -79,6 +79,12 @@ impl Default for EditorCameraState {
 }
 
 impl EditorCameraState {
+    /// Returns `true` when the right mouse button is held down for camera look/fly navigation.
+    #[must_use]
+    pub const fn is_right_down(&self) -> bool {
+        self.right_down
+    }
+
     /// Computes the world [`Transform`] for the 3D editor camera.
     #[must_use]
     pub fn compute_3d_transform(&self) -> Transform {
@@ -291,13 +297,14 @@ type EditorCam2dFilter = (With<EditorCamera2d>, Without<EditorCamera3d>);
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "Combines forwarded IPC input, optional native OS input, and 2D/3D camera sync"
+    reason = "Combines forwarded IPC input, optional native OS input, gizmo drag gate, and 2D/3D camera sync"
 )]
 pub(crate) fn update_editor_cameras(
     config: Res<ViewportConfig>,
     time: Res<Time>,
     mut state: ResMut<EditorCameraState>,
     frame_input: Res<ViewportFrameInput>,
+    gizmo_state: Option<Res<crate::gizmo::TransformGizmoState>>,
     mouse_buttons: Option<Res<ButtonInput<MouseButton>>>,
     key_codes: Option<Res<ButtonInput<KeyCode>>>,
     mut mouse_motion: MessageReader<MouseMotion>,
@@ -306,8 +313,24 @@ pub(crate) fn update_editor_cameras(
     mut cam2d_query: Query<(&mut Transform, &mut Projection), EditorCam2dFilter>,
 ) {
     let dt = time.delta_secs();
+    let gizmo_dragging = gizmo_state
+        .as_deref()
+        .is_some_and(crate::gizmo::TransformGizmoState::is_dragging);
+
     if !frame_input.events.is_empty() {
-        state.apply_forwarded_events(&frame_input.events, config.camera_mode, dt);
+        if gizmo_dragging {
+            let filtered: Vec<ViewportInputEvent> = frame_input
+                .events
+                .iter()
+                .filter(|event| !matches!(event, ViewportInputEvent::PointerMove { .. }))
+                .cloned()
+                .collect();
+            if !filtered.is_empty() {
+                state.apply_forwarded_events(&filtered, config.camera_mode, dt);
+            }
+        } else {
+            state.apply_forwarded_events(&frame_input.events, config.camera_mode, dt);
+        }
     }
 
     if config.mode == ViewportMode::NativeWindow {
@@ -324,7 +347,7 @@ pub(crate) fn update_editor_cameras(
         for motion in mouse_motion.read() {
             delta += motion.delta;
         }
-        if delta != Vec2::ZERO {
+        if !gizmo_dragging && delta != Vec2::ZERO {
             state.apply_pointer_delta(delta.x, delta.y, config.camera_mode);
         }
 
@@ -332,7 +355,7 @@ pub(crate) fn update_editor_cameras(
         for wheel in mouse_wheel.read() {
             wheel_y += wheel.y;
         }
-        if wheel_y.abs() > f32::EPSILON {
+        if !gizmo_dragging && wheel_y.abs() > f32::EPSILON {
             state.apply_wheel_delta(wheel_y, config.camera_mode);
         }
 

@@ -5,6 +5,7 @@ import {
   type DecodedViewportFrame,
   type EditorLogEntry,
   type FrameMetrics,
+  type GizmoStatePayload,
   type SceneTreeNode,
   type ServerIpcMessage,
   type ViewportCameraMode,
@@ -30,6 +31,8 @@ export class EditorIpcClient {
   private readonly hierarchyListeners = new Set<Listener<SceneTreeNode[]>>();
   private readonly selectionListeners = new Set<Listener<string[]>>();
   private readonly viewportStateListeners = new Set<Listener<ViewportStatePayload>>();
+  private readonly gizmoStateListeners = new Set<Listener<GizmoStatePayload>>();
+  private readonly inspectorRefreshListeners = new Set<Listener<string[]>>();
   private readonly metricsListeners = new Set<Listener<FrameMetrics>>();
   private readonly logListeners = new Set<Listener<EditorLogEntry>>();
   private readonly errorListeners = new Set<Listener<string>>();
@@ -77,6 +80,15 @@ export class EditorIpcClient {
     this.send({ type: "select_entities", guids });
   }
 
+  setGizmoState(next: GizmoStatePayload): void {
+    this.send({
+      type: "set_gizmo_state",
+      mode: next.mode,
+      space: next.space,
+      snap: next.snap,
+    });
+  }
+
   ping(nonce = Date.now()): void {
     this.send({ type: "ping", nonce });
   }
@@ -113,6 +125,20 @@ export class EditorIpcClient {
     this.viewportStateListeners.add(listener);
     return () => {
       this.viewportStateListeners.delete(listener);
+    };
+  }
+
+  onGizmoState(listener: Listener<GizmoStatePayload>): () => void {
+    this.gizmoStateListeners.add(listener);
+    return () => {
+      this.gizmoStateListeners.delete(listener);
+    };
+  }
+
+  onInspectorRefresh(listener: Listener<string[]>): () => void {
+    this.inspectorRefreshListeners.add(listener);
+    return () => {
+      this.inspectorRefreshListeners.delete(listener);
     };
   }
 
@@ -229,6 +255,20 @@ export class EditorIpcClient {
       case "viewport_state_changed":
         for (const listener of this.viewportStateListeners) {
           listener(parsed);
+        }
+        break;
+      case "gizmo_state_changed":
+        for (const listener of this.gizmoStateListeners) {
+          listener({
+            mode: parsed.mode,
+            space: parsed.space,
+            snap: parsed.snap,
+          });
+        }
+        break;
+      case "inspector_refresh":
+        for (const listener of this.inspectorRefreshListeners) {
+          listener(parsed.guids);
         }
         break;
       case "log":

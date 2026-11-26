@@ -3,7 +3,9 @@
 use engine_core::{EntityGuid, WorldMode};
 use serde::{Deserialize, Serialize};
 
-use crate::viewport::{ViewportCameraMode, ViewportInputEvent, ViewportMode};
+use crate::viewport::{
+    GizmoMode, GizmoSnapConfig, GizmoSpace, ViewportCameraMode, ViewportInputEvent, ViewportMode,
+};
 
 /// Severity levels for runtime log messages forwarded to the editor Console.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -95,6 +97,15 @@ pub enum ClientIpcMessage {
         /// Selected entity GUIDs.
         guids: Vec<EntityGuid>,
     },
+    /// Updates active transform gizmo mode, coordinate space, and snap configuration.
+    SetGizmoState {
+        /// Active gizmo tool (`translate`, `rotate`, or `scale`).
+        mode: GizmoMode,
+        /// Active coordinate space (`world` or `local`).
+        space: GizmoSpace,
+        /// Snapping configuration.
+        snap: GizmoSnapConfig,
+    },
     /// Heartbeat ping with caller-supplied nonce.
     Ping {
         /// Timestamp or sequence token echoed back in [`ServerIpcMessage::Pong`].
@@ -143,6 +154,20 @@ pub enum ServerIpcMessage {
         width: u32,
         /// Current render height in pixels.
         height: u32,
+    },
+    /// Notification that transform gizmo mode, space, or snap settings changed.
+    GizmoStateChanged {
+        /// Active gizmo tool (`translate`, `rotate`, or `scale`).
+        mode: GizmoMode,
+        /// Active coordinate space (`world` or `local`).
+        space: GizmoSpace,
+        /// Active snapping configuration.
+        snap: GizmoSnapConfig,
+    },
+    /// Hints the UI Inspector to refresh component values for the listed entities.
+    InspectorRefresh {
+        /// Persistent GUIDs of entities whose components changed in the runtime.
+        guids: Vec<EntityGuid>,
     },
     /// Log entry emitted by the runtime.
     Log {

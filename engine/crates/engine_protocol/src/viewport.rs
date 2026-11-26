@@ -34,6 +34,57 @@ pub enum ViewportCameraMode {
     Mode2D,
 }
 
+/// Transform gizmo manipulation mode (`W` = Translate, `E` = Rotate, `R` = Scale).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GizmoMode {
+    /// Move selected entities along axes or planes (`W`).
+    #[default]
+    Translate,
+    /// Rotate selected entities around axes (`E`).
+    Rotate,
+    /// Scale selected entities along axes or uniformly (`R`).
+    Scale,
+}
+
+/// Transform coordinate space used by gizmo handles (`World` vs `Local`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GizmoSpace {
+    /// Gizmo axes align with global world axes (`X`, `Y`, `Z`).
+    #[default]
+    World,
+    /// Gizmo axes align with the primary selected entity's orientation.
+    Local,
+}
+
+/// Snapping increments for 3D and 2D transform gizmo operations.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct GizmoSnapConfig {
+    /// Whether step snapping is enabled (`Ctrl` temporarily toggles while dragging).
+    pub enabled: bool,
+    /// 3D translation snap step in world units.
+    pub translate_step: f32,
+    /// 2D translation snap step in world/pixel units.
+    pub translate_step_2d: f32,
+    /// Rotation snap increment in degrees.
+    pub rotate_step_degrees: f32,
+    /// Scale snap increment.
+    pub scale_step: f32,
+}
+
+impl Default for GizmoSnapConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            translate_step: 0.5,
+            translate_step_2d: 16.0,
+            rotate_step_degrees: 15.0,
+            scale_step: 0.1,
+        }
+    }
+}
+
 /// Pixel format identifier stored in binary viewport frame headers.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

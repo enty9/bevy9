@@ -21,9 +21,9 @@ pub mod prelude {
             METHOD_SCENE_NEW, METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
         },
         viewport::{
-            decode_viewport_frame, encode_viewport_frame, InputModifiers, PixelFormat,
-            PointerButtonCode, ProtocolError, ViewportCameraMode, ViewportFrameHeader,
-            ViewportInputEvent, ViewportMode, FRAME_HEADER_BYTES, FRAME_MAGIC,
+            decode_viewport_frame, encode_viewport_frame, GizmoMode, GizmoSnapConfig, GizmoSpace,
+            InputModifiers, PixelFormat, PointerButtonCode, ProtocolError, ViewportCameraMode,
+            ViewportFrameHeader, ViewportInputEvent, ViewportMode, FRAME_HEADER_BYTES, FRAME_MAGIC,
         },
         PROTOCOL_VERSION,
     };
@@ -128,6 +128,17 @@ mod tests {
                 camera_mode: ViewportCameraMode::Mode2D,
             },
             ClientIpcMessage::SelectEntities { guids: vec![guid] },
+            ClientIpcMessage::SetGizmoState {
+                mode: GizmoMode::Rotate,
+                space: GizmoSpace::Local,
+                snap: GizmoSnapConfig {
+                    enabled: true,
+                    translate_step: 1.0,
+                    translate_step_2d: 32.0,
+                    rotate_step_degrees: 30.0,
+                    scale_step: 0.25,
+                },
+            },
             ClientIpcMessage::Ping { nonce: 777 },
         ];
 
@@ -168,6 +179,12 @@ mod tests {
                 width: 1280,
                 height: 720,
             },
+            ServerIpcMessage::GizmoStateChanged {
+                mode: GizmoMode::Scale,
+                space: GizmoSpace::Local,
+                snap: GizmoSnapConfig::default(),
+            },
+            ServerIpcMessage::InspectorRefresh { guids: vec![guid] },
             ServerIpcMessage::Log {
                 entry: EditorLogEntry {
                     level: LogLevel::Info,

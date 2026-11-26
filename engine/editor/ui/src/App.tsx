@@ -31,6 +31,7 @@ import type {
   DecodedViewportFrame,
   EntityPresetKind,
   FrameMetrics,
+  GizmoStatePayload,
   SceneTreeNode,
   ViewportCameraMode,
   ViewportInputEvent,
@@ -64,6 +65,18 @@ const DEFAULT_VIEWPORT_STATE: ViewportStatePayload = {
   height: 720,
 };
 
+const DEFAULT_GIZMO_STATE: GizmoStatePayload = {
+  mode: "translate",
+  space: "world",
+  snap: {
+    enabled: false,
+    translate_step: 0.5,
+    translate_step_2d: 16,
+    rotate_step_degrees: 15,
+    scale_step: 0.1,
+  },
+};
+
 function findNodeByGuid(
   nodes: SceneTreeNode[],
   guid: string,
@@ -95,6 +108,10 @@ export function App() {
   const [viewportState, setViewportState] = useState<ViewportStatePayload>(
     DEFAULT_VIEWPORT_STATE,
   );
+  const [gizmoState, setGizmoState] = useState<GizmoStatePayload>(
+    DEFAULT_GIZMO_STATE,
+  );
+  const [inspectorRevision, setInspectorRevision] = useState(0);
   const [metrics, setMetrics] = useState<FrameMetrics>(DEFAULT_METRICS);
   const [sceneName, setSceneName] = useState("Untitled Scene");
   const [scenePath, setScenePath] = useState<string | null>(null);
@@ -264,6 +281,11 @@ export function App() {
       ipcClient.onHierarchy(setHierarchy),
       ipcClient.onSelection(setSelection),
       ipcClient.onViewportState(setViewportState),
+      ipcClient.onGizmoState(setGizmoState),
+      ipcClient.onInspectorRefresh(() => {
+        setSceneDirty(true);
+        setInspectorRevision((rev) => rev + 1);
+      }),
       ipcClient.onMetrics(setMetrics),
       ipcClient.onLog((entry) => {
         appendLog({
@@ -486,6 +508,14 @@ export function App() {
     setViewportState((prev) => ({ ...prev, viewport_mode: nextMode }));
   }, [ipcClient, viewportState.viewport_mode]);
 
+  const handleChangeGizmoState = useCallback(
+    (next: GizmoStatePayload) => {
+      setGizmoState(next);
+      ipcClient?.setGizmoState(next);
+    },
+    [ipcClient],
+  );
+
   const handleSelectEntities = useCallback(
     (guids: string[]) => {
       setSelection(guids);
@@ -613,16 +643,47 @@ export function App() {
 
   useEffect(() => {
     function onWindowKeyDown(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
         event.preventDefault();
         void handleSaveScene();
+        return;
+      }
+
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isTextInput =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        target?.isContentEditable === true;
+      if (
+        isTextInput ||
+        tag === "CANVAS" ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.altKey
+      ) {
+        return;
+      }
+
+      const nextMode =
+        event.code === "KeyW"
+          ? "translate"
+          : event.code === "KeyE"
+            ? "rotate"
+            : event.code === "KeyR"
+              ? "scale"
+              : null;
+      if (nextMode) {
+        event.preventDefault();
+        handleChangeGizmoState({ ...gizmoState, mode: nextMode });
       }
     }
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [handleSaveScene]);
+  }, [handleSaveScene, handleChangeGizmoState, gizmoState]);
 
   const selectedNode = useMemo(
     () =>
@@ -713,9 +774,11 @@ export function App() {
             width={viewportState.width}
             height={viewportState.height}
             ipcState={ipcState}
+            gizmoState={gizmoState}
             subscribeFrames={subscribeFrames}
             onViewportInput={handleViewportInput}
             onToggleViewportMode={handleToggleViewportMode}
+            onChangeGizmoState={handleChangeGizmoState}
           />
         }
         bottom={
@@ -734,6 +797,7 @@ export function App() {
             selectedCount={selection.length}
             brpClient={brpClient}
             registrySchema={registrySchema}
+            inspectorRevision={inspectorRevision}
             onComponentChanged={(refreshTree) =>
               void handleComponentChanged(refreshTree)
             }

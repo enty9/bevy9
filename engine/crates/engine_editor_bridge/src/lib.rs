@@ -79,8 +79,12 @@ impl Plugin for EditorBridgePlugin {
         .add_systems(
             Update,
             (
+                picking::update_transform_gizmos_system
+                    .before(engine_render::EditorCameraSystems),
                 picking::handle_viewport_selection_picking,
                 picking::draw_editor_helper_icons_and_selection
+                    .run_if(resource_exists::<GizmoStorage<EditorOverlayGizmoGroup, ()>>),
+                picking::draw_transform_gizmos_system
                     .run_if(resource_exists::<GizmoStorage<EditorOverlayGizmoGroup, ()>>),
                 ipc_server::detect_scene_hierarchy_changes,
                 ipc_server::publish_ipc_updates.run_if(resource_exists::<EditorIpcServer>),
