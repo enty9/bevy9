@@ -37,7 +37,7 @@ use engine_render::{
 };
 use engine_scene::{
     ActiveScene, MeshPrimitive2d, MeshPrimitive3d, SceneCamera2d, SceneCamera3d,
-    SceneDirectionalLight, SceneEntity, ScenePointLight, SpriteDesc,
+    SceneDirectionalLight, SceneEntity, SceneGltfModel, ScenePointLight, SceneTilemap, SpriteDesc,
 };
 
 use crate::selection::{BridgeDirtyFlags, EditorSelection};
@@ -431,6 +431,8 @@ type SceneOverlayItem<'a> = (
     Option<&'a MeshPrimitive3d>,
     Option<&'a MeshPrimitive2d>,
     Option<&'a SpriteDesc>,
+    Option<&'a SceneGltfModel>,
+    Option<&'a SceneTilemap>,
     Option<&'a SceneDirectionalLight>,
     Option<&'a ScenePointLight>,
     Option<&'a SceneCamera3d>,
@@ -459,6 +461,8 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
         mesh3d,
         mesh2d,
         sprite_desc,
+        gltf_model,
+        tilemap,
         dir_light,
         point_light,
         cam3d,
@@ -547,6 +551,8 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                         mesh3d,
                         mesh2d,
                         sprite_desc,
+                        gltf_model,
+                        tilemap,
                         dir_light.is_some()
                             || point_light.is_some()
                             || cam3d.is_some()
@@ -588,6 +594,7 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                     let half = entity_local_half_extents_2d(
                         mesh2d,
                         sprite_desc,
+                        tilemap,
                         cam2d.is_some() || dir_light.is_some() || point_light.is_some(),
                     );
                     draw_oriented_rect_2d(&mut gizmos, global_tfm, half, outline_color);
@@ -618,6 +625,8 @@ fn entity_local_half_extents_3d(
     mesh3d: Option<&MeshPrimitive3d>,
     mesh2d: Option<&MeshPrimitive2d>,
     sprite_desc: Option<&SpriteDesc>,
+    gltf_model: Option<&SceneGltfModel>,
+    tilemap: Option<&SceneTilemap>,
     is_helper: bool,
     helper_scale: f32,
 ) -> Vec3 {
@@ -631,6 +640,9 @@ fn entity_local_half_extents_3d(
             }
         };
     }
+    if let Some(model) = gltf_model {
+        return Vec3::splat(0.75 * model.scale_multiplier.max(0.1));
+    }
     if let Some(prim) = mesh2d {
         return match *prim {
             MeshPrimitive2d::Rectangle { size } => Vec3::new(size.x * 0.5, size.y * 0.5, 0.05),
@@ -641,6 +653,10 @@ fn entity_local_half_extents_3d(
         let size = sprite.custom_size.unwrap_or(Vec2::splat(64.0));
         return Vec3::new(size.x * 0.5, size.y * 0.5, 0.05);
     }
+    if let Some(tm) = tilemap {
+        let s = 48.0 * tm.tile_scale.max(0.1);
+        return Vec3::new(s, s, 0.05);
+    }
     if is_helper {
         return Vec3::splat(helper_scale * 1.1);
     }
@@ -650,6 +666,7 @@ fn entity_local_half_extents_3d(
 fn entity_local_half_extents_2d(
     mesh2d: Option<&MeshPrimitive2d>,
     sprite_desc: Option<&SpriteDesc>,
+    tilemap: Option<&SceneTilemap>,
     is_helper: bool,
 ) -> Vec2 {
     if let Some(prim) = mesh2d {
@@ -661,6 +678,9 @@ fn entity_local_half_extents_2d(
     if let Some(sprite) = sprite_desc {
         let size = sprite.custom_size.unwrap_or(Vec2::splat(64.0));
         return size * 0.5 + Vec2::splat(3.0);
+    }
+    if let Some(tm) = tilemap {
+        return Vec2::splat(48.0 * tm.tile_scale.max(0.1));
     }
     if is_helper {
         return Vec2::splat(22.0);

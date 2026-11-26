@@ -61,12 +61,18 @@ export function persistLayout(state: DockLayoutState): void {
   }
 }
 
+export type BottomDockTab = "content" | "console";
+
 interface DockLayoutProps {
   layout: DockLayoutState;
   onChange: (next: DockLayoutState) => void;
   left: ReactNode;
   center: ReactNode;
-  bottom: ReactNode;
+  bottomContentBrowser: ReactNode;
+  bottomConsole: ReactNode;
+  activeBottomTab: BottomDockTab;
+  onChangeBottomTab: (tab: BottomDockTab) => void;
+  consoleBadgeCount?: number;
   right: ReactNode;
 }
 
@@ -77,7 +83,11 @@ export function DockLayout({
   onChange,
   left,
   center,
-  bottom,
+  bottomContentBrowser,
+  bottomConsole,
+  activeBottomTab,
+  onChangeBottomTab,
+  consoleBadgeCount = 0,
   right,
 }: DockLayoutProps) {
   const dragRef = useRef<{
@@ -175,7 +185,11 @@ export function DockLayout({
           className="splitter splitter-h"
           role="separator"
           aria-orientation="horizontal"
-          title={layout.bottomCollapsed ? "Expand Console" : "Drag to resize Console"}
+          title={
+            layout.bottomCollapsed
+              ? "Expand Bottom Dock"
+              : "Drag to resize Bottom Dock"
+          }
           onPointerDown={(e) => beginDrag("bottom", e, layout.bottomHeight)}
           onPointerMove={handlePointerMove}
           onPointerUp={endDrag}
@@ -187,16 +201,58 @@ export function DockLayout({
 
         {!layout.bottomCollapsed ? (
           <section className="dock-bottom-pane" style={{ height: layout.bottomHeight }}>
-            {bottom}
+            <div className="bottom-dock-tabs">
+              <button
+                type="button"
+                className={`bottom-tab-btn ${activeBottomTab === "content" ? "active" : ""}`}
+                onClick={() => onChangeBottomTab("content")}
+              >
+                Content Browser
+              </button>
+              <button
+                type="button"
+                className={`bottom-tab-btn ${activeBottomTab === "console" ? "active" : ""}`}
+                onClick={() => onChangeBottomTab("console")}
+              >
+                Console
+                {consoleBadgeCount > 0 && (
+                  <span className="bottom-tab-badge">{consoleBadgeCount}</span>
+                )}
+              </button>
+              <div className="bottom-tabs-spacer" />
+              <button
+                type="button"
+                className="ghost-btn"
+                onClick={() => onChange({ ...layout, bottomCollapsed: true })}
+              >
+                Hide
+              </button>
+            </div>
+            <div className="bottom-dock-body">
+              {activeBottomTab === "content" ? bottomContentBrowser : bottomConsole}
+            </div>
           </section>
         ) : (
           <div className="dock-bottom-collapsed">
             <button
               type="button"
               className="ghost-btn"
-              onClick={() => onChange({ ...layout, bottomCollapsed: false })}
+              onClick={() => {
+                onChangeBottomTab("content");
+                onChange({ ...layout, bottomCollapsed: false });
+              }}
             >
-              Show Console
+              Show Content Browser
+            </button>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                onChangeBottomTab("console");
+                onChange({ ...layout, bottomCollapsed: false });
+              }}
+            >
+              Show Console{consoleBadgeCount > 0 ? ` (${consoleBadgeCount})` : ""}
             </button>
           </div>
         )}

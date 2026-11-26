@@ -1,40 +1,55 @@
 //! Bevy Remote Protocol (BRP) plugin builder and custom engine RPC methods.
 
+use std::path::PathBuf;
+
+use bevy_asset::AssetServer;
+use bevy_camera::{visibility::Visibility, Camera};
+use bevy_color::Color;
 use bevy_ecs::{entity::Entity, hierarchy::ChildOf, name::Name, query::With, system::In, world::World};
-use bevy_math::Vec3;
+use bevy_math::{Vec2, Vec3};
 use bevy_remote::{
     builtin_methods::{parse, parse_some},
     error_codes,
     http::{Headers, RemoteHttpPlugin},
     BrpError, BrpResult, RemotePlugin,
 };
-use bevy_transform::components::Transform;
+use bevy_transform::components::{GlobalTransform, Transform};
+use engine_assets::{AssetError, AssetRegistry, ThumbnailService};
 use engine_core::{EntityGuid, EntityGuidMap, ProjectPaths, WorldMode};
 use engine_protocol::{
-    AddComponentParams, ComponentMutationResult, DeleteEntityParams, DeleteEntityResult,
-    PrefabApplyResult, PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams,
-    PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams, PrefabSpawnResult,
-    RemoveComponentParams, ReparentEntityParams, ReparentEntityResult, SceneLoadParams,
-    SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
+    AddComponentParams, AssetCreateFolderParams, AssetDeleteParams, AssetDeleteResult,
+    AssetImportParams, AssetImportResult, AssetKind, AssetListParams, AssetMoveParams,
+    AssetSpawnInViewportParams, AssetSpawnInViewportResult, AssetThumbnailParams,
+    AssetThumbnailResult, AssetUpdateSettingsParams, ComponentMutationResult, DeleteEntityParams,
+    DeleteEntityResult, PrefabApplyResult, PrefabInstanceActionParams, PrefabListResult,
+    PrefabRevertParams, PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams,
+    PrefabSpawnResult, RemoveComponentParams, ReparentEntityParams, ReparentEntityResult,
+    SceneLoadParams, SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
     SetViewportModeParams, SetViewportModeResult, SpawnPresetParams, SpawnPresetResult,
-    ViewportCameraMode, WorldTreeResult, METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE,
-    METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE, METHOD_ENTITY_REPARENT,
-    METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO,
-    METHOD_PREFAB_APPLY, METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE,
-    METHOD_PREFAB_SPAWN, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE,
+    ViewportCameraMode, WorldTreeResult, METHOD_ASSET_CREATE_FOLDER, METHOD_ASSET_DELETE,
+    METHOD_ASSET_IMPORT, METHOD_ASSET_LIST, METHOD_ASSET_MOVE, METHOD_ASSET_RESCAN,
+    METHOD_ASSET_SPAWN_IN_VIEWPORT, METHOD_ASSET_THUMBNAIL, METHOD_ASSET_UPDATE_SETTINGS,
+    METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE,
+    METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO, METHOD_HISTORY_STATE,
+    METHOD_HISTORY_UNDO, METHOD_PREFAB_APPLY, METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT,
+    METHOD_PREFAB_SAVE, METHOD_PREFAB_SPAWN, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE,
     METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
 };
-use engine_render::ViewportConfig;
+use engine_render::{
+    camera::{EditorCamera2d, EditorCamera3d},
+    ViewportConfig,
+};
 use engine_scene::{
     apply_prefab_instance, build_scene_tree, default_preset_name, despawn_subtree,
     ensure_prefab_extension, list_prefab_files, load_level_from_file, normalize_prefab_path,
     read_reflected_component_json, remove_reflected_component, reset_to_new_scene,
     resolve_prefab_instance_root, revert_prefab_instance, save_level_to_file, save_prefab_to_file,
     snapshot_subtree, spawn_prefab_from_file, spawn_preset, write_reflected_component_json,
-    ActiveScene, LevelMetadata, PrefabMember, SceneEntity,
+    ActiveScene, LevelMetadata, MeshPrimitive3d, PrefabMember, SceneEntity, SceneGltfModel,
+    SceneTilemap, SpriteDesc, StandardMaterialDesc,
 };
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{
     config::EditorBridgeConfig,
@@ -69,6 +84,15 @@ pub fn build_remote_plugin() -> RemotePlugin {
         .with_method_main(METHOD_PREFAB_REVERT, handle_prefab_revert)
         .with_method_main(METHOD_PREFAB_LIST, handle_prefab_list)
         .with_method_main(METHOD_VIEWPORT_SET_MODE, handle_viewport_set_mode)
+        .with_method_main(METHOD_ASSET_LIST, handle_asset_list)
+        .with_method_main(METHOD_ASSET_IMPORT, handle_asset_import)
+        .with_method_main(METHOD_ASSET_MOVE, handle_asset_move)
+        .with_method_main(METHOD_ASSET_DELETE, handle_asset_delete)
+        .with_method_main(METHOD_ASSET_CREATE_FOLDER, handle_asset_create_folder)
+        .with_method_main(METHOD_ASSET_UPDATE_SETTINGS, handle_asset_update_settings)
+        .with_method_main(METHOD_ASSET_THUMBNAIL, handle_asset_thumbnail)
+        .with_method_main(METHOD_ASSET_SPAWN_IN_VIEWPORT, handle_asset_spawn_in_viewport)
+        .with_method_main(METHOD_ASSET_RESCAN, handle_asset_rescan)
 }
 
 /// Builds Bevy's [`RemoteHttpPlugin`] configured from [`EditorBridgeConfig`].
@@ -793,4 +817,397 @@ fn handle_viewport_set_mode(In(params): In<Option<Value>>, world: &mut World) ->
     }
 
     serialize_result(SetViewportModeResult { mode: params.mode })
+}
+
+fn asset_error_to_brp(err: AssetError) -> BrpError {
+    match err {
+        AssetError::HasDependents { uuid, dependents } => BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: format!(
+                "Asset {uuid} is still referenced by {} dependent(s): {}",
+                dependents.len(),
+                dependents.join(", ")
+            ),
+            data: Some(json!({
+                "uuid": uuid,
+                "blocked_by_dependents": dependents,
+            })),
+        },
+        AssetError::NotFound(_)
+        | AssetError::InvalidRelativePath(_)
+        | AssetError::DestinationExists(_)
+        | AssetError::InvalidData(_) => BrpError {
+            code: error_codes::INVALID_PARAMS,
+            message: err.to_string(),
+            data: None,
+        },
+        AssetError::Io { .. } | AssetError::RonParse { .. } | AssetError::RonSerialize(_) => {
+            BrpError::internal(err)
+        }
+    }
+}
+
+fn queue_missing_asset_thumbnails(world: &mut World) {
+    let Some(registry) = world.get_resource::<AssetRegistry>().cloned() else {
+        return;
+    };
+    if let Some(mut service) = world.get_resource_mut::<ThumbnailService>() {
+        service.request_all_missing(&registry);
+    }
+}
+
+fn handle_asset_list(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let filter: AssetListParams = match params {
+        Some(Value::Null) | None => AssetListParams::default(),
+        Some(other) => parse(other)?,
+    };
+    let Some(registry) = world.get_resource::<AssetRegistry>() else {
+        return Err(BrpError::resource_not_present("AssetRegistry"));
+    };
+    serialize_result(registry.snapshot(&filter))
+}
+
+fn handle_asset_import(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetImportParams = parse_some(params)?;
+    let source_paths: Vec<PathBuf> = params.source_paths.iter().map(PathBuf::from).collect();
+    let imported = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry
+            .import_external_files(&source_paths, &params.target_folder)
+            .map_err(asset_error_to_brp)?
+    };
+    queue_missing_asset_thumbnails(world);
+    serialize_result(AssetImportResult { imported })
+}
+
+fn handle_asset_move(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetMoveParams = parse_some(params)?;
+    let moved = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry
+            .move_or_rename(params.uuid, &params.new_relative_path)
+            .map_err(asset_error_to_brp)?
+    };
+    queue_missing_asset_thumbnails(world);
+    serialize_result(moved)
+}
+
+fn handle_asset_delete(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetDeleteParams = parse_some(params)?;
+    let dependents = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry
+            .delete_asset(params.uuid, params.force)
+            .map_err(asset_error_to_brp)?
+    };
+    serialize_result(AssetDeleteResult {
+        deleted_uuid: params.uuid,
+        dependents,
+    })
+}
+
+fn handle_asset_create_folder(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetCreateFolderParams = parse_some(params)?;
+    let entry = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry
+            .create_folder(&params.relative_path)
+            .map_err(asset_error_to_brp)?
+    };
+    serialize_result(entry)
+}
+
+fn handle_asset_update_settings(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetUpdateSettingsParams = parse_some(params)?;
+    let updated = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry
+            .update_import_settings(params.uuid, params.import_settings, params.tags)
+            .map_err(asset_error_to_brp)?
+    };
+    if let Some(asset_server) = world.get_resource::<AssetServer>() {
+        asset_server.reload(updated.relative_path.clone());
+    }
+    serialize_result(updated)
+}
+
+fn handle_asset_thumbnail(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetThumbnailParams = parse_some(params)?;
+    let (record, abs_path) = {
+        let Some(registry) = world.get_resource::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        let shared = registry.shared();
+        let rec = shared
+            .get(params.uuid)
+            .ok_or_else(|| asset_error_to_brp(AssetError::NotFound(params.uuid)))?;
+        let abs = shared
+            .resolve_abs_path(params.uuid)
+            .ok_or_else(|| asset_error_to_brp(AssetError::NotFound(params.uuid)))?;
+        (rec, abs)
+    };
+
+    let data_url = if let Some(mut service) = world.get_resource_mut::<ThumbnailService>() {
+        service.request_for_record(&record, abs_path);
+        service.get_data_url(params.uuid, &record.source_hash)
+    } else {
+        None
+    };
+
+    serialize_result(AssetThumbnailResult {
+        uuid: params.uuid,
+        ready: data_url.is_some(),
+        data_url,
+    })
+}
+
+fn resolve_viewport_drop_position(
+    world: &mut World,
+    screen_pos: Vec2,
+) -> (Vec3, ViewportCameraMode) {
+    let camera_mode = world
+        .get_resource::<ViewportConfig>()
+        .map_or(ViewportCameraMode::Mode3D, |cfg| cfg.camera_mode);
+
+    let mut cam_q = world.query::<(
+        &Camera,
+        &GlobalTransform,
+        Option<&EditorCamera3d>,
+        Option<&EditorCamera2d>,
+    )>();
+
+    let mut chosen_ray = None;
+    let mut fallback_ray = None;
+
+    for (camera, tfm, cam3d, cam2d) in cam_q.iter(world) {
+        if !camera.is_active {
+            continue;
+        }
+        let Ok(ray) = camera.viewport_to_world(tfm, screen_pos) else {
+            continue;
+        };
+        let matches_mode = match camera_mode {
+            ViewportCameraMode::Mode3D => cam3d.is_some(),
+            ViewportCameraMode::Mode2D => cam2d.is_some(),
+        };
+        if matches_mode {
+            chosen_ray = Some(ray);
+            break;
+        }
+        if fallback_ray.is_none() {
+            fallback_ray = Some(ray);
+        }
+    }
+
+    let Some(ray) = chosen_ray.or(fallback_ray) else {
+        return (Vec3::ZERO, camera_mode);
+    };
+
+    let pos = match camera_mode {
+        ViewportCameraMode::Mode3D => {
+            if ray.direction.y.abs() > 1e-4 {
+                let t = -ray.origin.y / ray.direction.y;
+                if t > 0.0 && t < 120.0 {
+                    ray.origin + ray.direction * t
+                } else {
+                    ray.origin + ray.direction * 6.0
+                }
+            } else {
+                ray.origin + ray.direction * 6.0
+            }
+        }
+        ViewportCameraMode::Mode2D => {
+            if ray.direction.z.abs() > 1e-4 {
+                let t = -ray.origin.z / ray.direction.z;
+                let hit = ray.origin + ray.direction * t;
+                Vec3::new(hit.x, hit.y, 0.0)
+            } else {
+                Vec3::new(ray.origin.x, ray.origin.y, 0.0)
+            }
+        }
+    };
+
+    (pos, camera_mode)
+}
+
+fn handle_asset_spawn_in_viewport(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let params: AssetSpawnInViewportParams = parse_some(params)?;
+    let (record, abs_path) = {
+        let Some(registry) = world.get_resource::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        let shared = registry.shared();
+        let rec = shared
+            .get(params.uuid)
+            .ok_or_else(|| asset_error_to_brp(AssetError::NotFound(params.uuid)))?;
+        let abs = shared
+            .resolve_abs_path(params.uuid)
+            .ok_or_else(|| asset_error_to_brp(AssetError::NotFound(params.uuid)))?;
+        (rec, abs)
+    };
+
+    let (pos, camera_mode) =
+        resolve_viewport_drop_position(world, Vec2::new(params.x, params.y));
+    let stem = record
+        .name
+        .split('.')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&record.name)
+        .to_owned();
+
+    let (entity, guid, label) = match record.kind {
+        AssetKind::GltfModel => {
+            let guid = EntityGuid::new();
+            let entity = world
+                .spawn((
+                    SceneEntity,
+                    guid,
+                    Name::new(stem.clone()),
+                    Transform::from_translation(pos),
+                    Visibility::default(),
+                    SceneGltfModel {
+                        asset: Some(params.uuid),
+                        scene_index: 0,
+                        scale_multiplier: 1.0,
+                    },
+                ))
+                .id();
+            (entity, guid, format!("Spawn glTF {stem}"))
+        }
+        AssetKind::Image => {
+            let is_2d = world
+                .get_resource::<ActiveScene>()
+                .is_some_and(|s| s.world_mode == WorldMode::Mode2D)
+                || camera_mode == ViewportCameraMode::Mode2D;
+            let guid = EntityGuid::new();
+            if is_2d {
+                let entity = world
+                    .spawn((
+                        SceneEntity,
+                        guid,
+                        Name::new(stem.clone()),
+                        Transform::from_translation(Vec3::new(pos.x, pos.y, 0.0)),
+                        Visibility::default(),
+                        SpriteDesc {
+                            color: Color::WHITE,
+                            texture: Some(params.uuid),
+                            atlas_index: None,
+                            custom_size: Some(Vec2::splat(64.0)),
+                            flip_x: false,
+                            flip_y: false,
+                        },
+                    ))
+                    .id();
+                (entity, guid, format!("Spawn Sprite {stem}"))
+            } else {
+                let entity = world
+                    .spawn((
+                        SceneEntity,
+                        guid,
+                        Name::new(stem.clone()),
+                        Transform::from_translation(pos + Vec3::Y * 0.5),
+                        Visibility::default(),
+                        MeshPrimitive3d::Cube { size: Vec3::ONE },
+                        StandardMaterialDesc {
+                            base_color: Color::WHITE,
+                            base_color_texture: Some(params.uuid),
+                            ..Default::default()
+                        },
+                    ))
+                    .id();
+                (entity, guid, format!("Spawn Textured Cube {stem}"))
+            }
+        }
+        AssetKind::Tilemap => {
+            let guid = EntityGuid::new();
+            let entity = world
+                .spawn((
+                    SceneEntity,
+                    guid,
+                    Name::new(stem.clone()),
+                    Transform::from_translation(Vec3::new(pos.x, pos.y, 0.0)),
+                    Visibility::default(),
+                    SceneTilemap {
+                        asset: Some(params.uuid),
+                        tile_scale: 1.0,
+                    },
+                ))
+                .id();
+            (entity, guid, format!("Spawn Tilemap {stem}"))
+        }
+        AssetKind::Prefab => {
+            let project_root = world
+                .get_resource::<ProjectPaths>()
+                .map(|p| p.root_dir.clone());
+            let key = normalize_prefab_path(&abs_path, project_root.as_deref());
+            let (entity, guid) =
+                spawn_prefab_from_file(world, &abs_path, &key, None, Some(pos))
+                    .map_err(BrpError::internal)?;
+            (entity, guid, format!("Spawn Prefab {stem}"))
+        }
+        AssetKind::Scene | AssetKind::Script | AssetKind::Material | AssetKind::Unknown => {
+            return Err(BrpError {
+                code: error_codes::INVALID_PARAMS,
+                message: format!(
+                    "Asset '{}' ({:?}) cannot be spawned directly into Viewport",
+                    record.relative_path, record.kind
+                ),
+                data: None,
+            });
+        }
+    };
+
+    let spawned_name = world
+        .get::<Name>(entity)
+        .map_or(stem, |n| n.as_str().to_owned());
+
+    let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
+    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+        history.record(
+            EditorCommand::CreateEntity { snapshot, label },
+            None,
+            now_epoch_ms(),
+        );
+    }
+
+    let selection_changed = world
+        .get_resource_mut::<EditorSelection>()
+        .is_some_and(|mut selection| selection.set(vec![guid]));
+    if selection_changed && let Some(mut dirty) = world.get_resource_mut::<BridgeDirtyFlags>() {
+        dirty.selection_dirty = true;
+    }
+    mark_mutation_dirty(world, true, None);
+
+    serialize_result(AssetSpawnInViewportResult {
+        guid,
+        entity_bits: entity.to_bits(),
+        name: spawned_name,
+    })
+}
+
+fn handle_asset_rescan(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    let filter: AssetListParams = match params {
+        Some(Value::Null) | None => AssetListParams::default(),
+        Some(other) => parse(other)?,
+    };
+    let snapshot = {
+        let Some(mut registry) = world.get_resource_mut::<AssetRegistry>() else {
+            return Err(BrpError::resource_not_present("AssetRegistry"));
+        };
+        registry.scan_all().map_err(asset_error_to_brp)?;
+        registry.snapshot(&filter)
+    };
+    queue_missing_asset_thumbnails(world);
+    serialize_result(snapshot)
 }

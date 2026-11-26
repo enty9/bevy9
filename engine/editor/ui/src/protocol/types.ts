@@ -183,6 +183,7 @@ export type ServerIpcMessage =
   | ({ type: "gizmo_state_changed" } & GizmoStatePayload)
   | { type: "inspector_refresh"; guids: string[] }
   | { type: "history_state_changed"; state: HistoryStatePayload }
+  | { type: "assets_changed"; revision: number }
   | { type: "log"; entry: EditorLogEntry }
   | { type: "metrics"; metrics: FrameMetrics }
   | { type: "pong"; nonce: number }
@@ -354,4 +355,111 @@ export type BrpRegistrySchema = Record<string, BrpSchemaType>;
 export interface BrpGetComponentsResponse {
   components: Record<string, unknown>;
   errors?: Record<string, { code: number; message: string }>;
+}
+
+export type AssetKind =
+  | "image"
+  | "gltf_model"
+  | "prefab"
+  | "scene"
+  | "tilemap"
+  | "script"
+  | "material"
+  | "unknown";
+
+export type TextureFilterMode = "linear" | "nearest";
+
+export interface AtlasGridSettings {
+  tile_size: [number, number];
+  columns: number;
+  rows: number;
+  padding: [number, number];
+  offset: [number, number];
+}
+
+export interface ImageImportSettings {
+  filter_mode: TextureFilterMode;
+  srgb: boolean;
+  atlas_grid: AtlasGridSettings | null;
+}
+
+export interface GltfImportSettings {
+  scale: number;
+  generate_normals_and_tangents: boolean;
+  load_meshes: boolean;
+  load_materials: boolean;
+  load_cameras: boolean;
+  load_lights: boolean;
+  load_animations: boolean;
+}
+
+export interface TilemapImportSettings {
+  pixels_per_unit: number;
+}
+
+export type AssetImportSettings =
+  | ({ kind: "image" } & ImageImportSettings)
+  | ({ kind: "gltf" } & GltfImportSettings)
+  | ({ kind: "tilemap" } & TilemapImportSettings)
+  | { kind: "generic" };
+
+export interface SubAssetInfo {
+  label: string;
+  kind: string;
+  name: string;
+}
+
+export interface AssetRecord {
+  uuid: string;
+  relative_path: string;
+  name: string;
+  kind: AssetKind;
+  file_size: number;
+  modified_ms: number;
+  source_hash: string;
+  tags: string[];
+  dependencies: string[];
+  dependents: string[];
+  sub_assets: SubAssetInfo[];
+  import_settings: AssetImportSettings;
+  has_thumbnail: boolean;
+}
+
+export interface AssetFolderEntry {
+  relative_path: string;
+  name: string;
+}
+
+export interface AssetRegistrySnapshot {
+  root_dir: string;
+  folders: AssetFolderEntry[];
+  assets: AssetRecord[];
+}
+
+export interface AssetListParams {
+  folder?: string | null;
+  kind?: AssetKind | null;
+  search?: string | null;
+  tag?: string | null;
+}
+
+export interface AssetImportResult {
+  imported: AssetRecord[];
+}
+
+export interface AssetDeleteResult {
+  deleted_uuid: string;
+  dependents: string[];
+}
+
+export interface AssetThumbnailResult {
+  uuid: string;
+  ready: boolean;
+  data_url: string | null;
+}
+
+export interface AssetSpawnInViewportResult {
+  guid: string;
+  entity_bits: number;
+  name: string;
 }

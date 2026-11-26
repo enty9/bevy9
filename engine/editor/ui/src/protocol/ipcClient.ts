@@ -35,6 +35,7 @@ export class EditorIpcClient {
   private readonly gizmoStateListeners = new Set<Listener<GizmoStatePayload>>();
   private readonly inspectorRefreshListeners = new Set<Listener<string[]>>();
   private readonly historyStateListeners = new Set<Listener<HistoryStatePayload>>();
+  private readonly assetsChangedListeners = new Set<Listener<number>>();
   private readonly metricsListeners = new Set<Listener<FrameMetrics>>();
   private readonly logListeners = new Set<Listener<EditorLogEntry>>();
   private readonly errorListeners = new Set<Listener<string>>();
@@ -148,6 +149,13 @@ export class EditorIpcClient {
     this.historyStateListeners.add(listener);
     return () => {
       this.historyStateListeners.delete(listener);
+    };
+  }
+
+  onAssetsChanged(listener: Listener<number>): () => void {
+    this.assetsChangedListeners.add(listener);
+    return () => {
+      this.assetsChangedListeners.delete(listener);
     };
   }
 
@@ -283,6 +291,11 @@ export class EditorIpcClient {
       case "history_state_changed":
         for (const listener of this.historyStateListeners) {
           listener(parsed.state);
+        }
+        break;
+      case "assets_changed":
+        for (const listener of this.assetsChangedListeners) {
+          listener(parsed.revision);
         }
         break;
       case "log":

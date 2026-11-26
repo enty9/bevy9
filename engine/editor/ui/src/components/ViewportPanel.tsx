@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -15,8 +16,14 @@ import {
   Move,
   RotateCw,
 } from "lucide-react";
+import {
+  clearDraggedAsset,
+  isAssetDragActive,
+  readDraggedAssetFromEvent,
+} from "../lib/assetDrag";
 import type { IpcConnectionState } from "../protocol/ipcClient";
 import type {
+  AssetRecord,
   DecodedViewportFrame,
   GizmoMode,
   GizmoSnapConfig,
@@ -38,10 +45,12 @@ interface ViewportPanelProps {
   height: number;
   ipcState: IpcConnectionState;
   gizmoState: GizmoStatePayload;
+  assets?: AssetRecord[];
   subscribeFrames: FrameSubscriber;
   onViewportInput: (event: ViewportInputEvent) => void;
   onToggleViewportMode: () => void;
   onChangeGizmoState: (next: GizmoStatePayload) => void;
+  onDropAsset?: (asset: AssetRecord, viewportX: number, viewportY: number) => void;
 }
 
 function clampDim(value: number): number {
@@ -83,10 +92,12 @@ export function ViewportPanel({
   height,
   ipcState,
   gizmoState,
+  assets,
   subscribeFrames,
   onViewportInput,
   onToggleViewportMode,
   onChangeGizmoState,
+  onDropAsset,
 }: ViewportPanelProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -102,6 +113,7 @@ export function ViewportPanel({
 
   const [hasFrame, setHasFrame] = useState(false);
   const [snapPopoverOpen, setSnapPopoverOpen] = useState(false);
+  const [assetDropActive, setAssetDropActive] = useState(false);
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({
     width,
     height,
@@ -584,7 +596,52 @@ export function ViewportPanel({
         </div>
       </div>
 
-      <div ref={containerRef} className="viewport-container">
+      <div
+        ref={containerRef}
+        className={`viewport-container ${assetDropActive ? "asset-drop-active" : ""}`}
+        onDragOver={(e: ReactDragEvent<HTMLDivElement>) => {
+          if (!onDropAsset || !isAssetDragActive(e)) {
+            return;
+          }
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          if (!assetDropActive) {
+            setAssetDropActive(true);
+          }
+        }}
+        onDragLeave={(e: ReactDragEvent<HTMLDivElement>) => {
+          if (
+            !e.currentTarget.contains(e.relatedTarget as Node | null) &&
+            assetDropActive
+          ) {
+            setAssetDropActive(false);
+          }
+        }}
+        onDrop={(e: ReactDragEvent<HTMLDivElement>) => {
+          setAssetDropActive(false);
+          if (!onDropAsset) {
+            return;
+          }
+          const asset = readDraggedAssetFromEvent(e, assets);
+          clearDraggedAsset();
+          if (!asset) {
+            return;
+          }
+          e.preventDefault();
+          const rect = (canvasRef.current ?? containerRef.current)?.getBoundingClientRect();
+          const vx = rect
+            ? Math.max(0, Math.min(rect.width, e.clientX - rect.left))
+            : width * 0.5;
+          const vy = rect
+            ? Math.max(0, Math.min(rect.height, e.clientY - rect.top))
+            : height * 0.5;
+          const scaledX =
+            rect && rect.width > 0 ? (vx / rect.width) * width : width * 0.5;
+          const scaledY =
+            rect && rect.height > 0 ? (vy / rect.height) * height : height * 0.5;
+          onDropAsset(asset, scaledX, scaledY);
+        }}
+      >
         {viewportMode === "offscreen" ? (
           <>
             <canvas
@@ -601,6 +658,12 @@ export function ViewportPanel({
               onFocus={handleFocus}
               onBlur={handleBlur}
             />
+
+            {assetDropActive && (
+              <div className="viewport-drop-overlay">
+                Drop asset to spawn in scene
+              </div>
+            )}
 
             {!hasFrame && (
               <div className="viewport-overlay-status">

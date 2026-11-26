@@ -10,11 +10,13 @@ rust-version.workspace = true
 workspace = true
 
 [dependencies]
+engine_assets = { workspace = true }
 engine_core = { workspace = true }
 engine_protocol = { workspace = true }
 engine_scene = { workspace = true }
 engine_render = { workspace = true }
 bevy_app = { workspace = true }
+bevy_asset = { workspace = true }
 bevy_camera = { workspace = true }
 bevy_color = { workspace = true }
 bevy_ecs = { workspace = true }
@@ -36,7 +38,7 @@ tracing = { workspace = true }
 tungstenite = { workspace = true }
 
 [dev-dependencies]
-bevy_asset = { workspace = true }
 bevy_image = { workspace = true }
 bevy_pbr = { workspace = true }
 bevy_sprite_render = { workspace = true }
+bevy_world_serialization = { workspace = true }

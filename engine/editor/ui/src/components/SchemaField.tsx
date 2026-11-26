@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { RotateCcw, X } from "lucide-react";
+import {
+  clearDraggedAsset,
+  isAssetDragActive,
+  readDraggedAssetFromEvent,
+} from "../lib/assetDrag";
 import { buildColorValue, extractColorInfo, hexToRgba, rgbaToHex } from "../lib/color";
 import { eulerDegToQuat, quatToEulerDeg } from "../lib/math";
 import {
@@ -7,7 +12,12 @@ import {
   buildDefaultValueForVariant,
   resolveSchemaRef,
 } from "../lib/schemaDefaults";
-import type { BrpRegistrySchema, BrpSchemaType } from "../protocol/types";
+import type {
+  AssetKind,
+  AssetRecord,
+  BrpRegistrySchema,
+  BrpSchemaType,
+} from "../protocol/types";
 
 interface NumericInputProps {
   value: number;
@@ -227,19 +237,154 @@ function isColorType(typePath: string): boolean {
   );
 }
 
+function inferAssetKindFilter(
+  parentTypePath?: string,
+  fieldLabel?: string,
+): AssetKind | null {
+  if (fieldLabel === "base_color_texture" || fieldLabel === "texture") {
+    return "image";
+  }
+  if (parentTypePath?.includes("SceneGltfModel")) {
+    return "gltf_model";
+  }
+  if (parentTypePath?.includes("SceneTilemap")) {
+    return "tilemap";
+  }
+  if (fieldLabel?.includes("prefab")) {
+    return "prefab";
+  }
+  return null;
+}
+
+function readAssetUuidValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (Array.isArray(value) && typeof value[0] === "string") {
+    return value[0];
+  }
+  return "";
+}
+
+interface AssetSlotFieldProps {
+  label?: string;
+  isOptional: boolean;
+  value: unknown;
+  assets: AssetRecord[];
+  kindFilter: AssetKind | null;
+  onChange: (next: unknown, immediate?: boolean) => void;
+}
+
+function AssetSlotField({
+  label,
+  isOptional,
+  value,
+  assets,
+  kindFilter,
+  onChange,
+}: AssetSlotFieldProps) {
+  const [dropActive, setDropActive] = useState(false);
+  const currentUuid = readAssetUuidValue(value);
+  const currentAsset = assets.find((a) => a.uuid === currentUuid) ?? null;
+
+  const compatibleAssets = kindFilter
+    ? assets.filter((a) => a.kind === kindFilter)
+    : assets;
+
+  const handleDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!isAssetDragActive(e)) {
+      return;
+    }
+    const candidate = readDraggedAssetFromEvent(e, assets);
+    if (candidate && kindFilter && candidate.kind !== kindFilter) {
+      return;
+    }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    if (!dropActive) {
+      setDropActive(true);
+    }
+  };
+
+  const handleDrop = (e: ReactDragEvent<HTMLDivElement>) => {
+    setDropActive(false);
+    const asset = readDraggedAssetFromEvent(e, assets);
+    clearDraggedAsset();
+    if (!asset) {
+      return;
+    }
+    if (kindFilter && asset.kind !== kindFilter) {
+      return;
+    }
+    e.preventDefault();
+    onChange(asset.uuid, true);
+  };
+
+  return (
+    <div className="prop-row">
+      {label && <span className="prop-label">{label}</span>}
+      <div
+        className={`asset-slot-control prop-control ${dropActive ? "drop-active" : ""}`}
+        onDragOver={handleDragOver}
+        onDragLeave={() => setDropActive(false)}
+        onDrop={handleDrop}
+        title={
+          currentAsset
+            ? `${currentAsset.relative_path} (${currentAsset.uuid})`
+            : currentUuid || "Drop asset from Content Browser or select"
+        }
+      >
+        <select
+          className="select-input asset-slot-select"
+          value={currentUuid}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next ? next : isOptional ? null : currentUuid, true);
+          }}
+        >
+          <option value="">
+            {currentUuid && !currentAsset
+              ? `Missing (${currentUuid.slice(0, 8)}…)`
+              : "None (Drop asset)"}
+          </option>
+          {compatibleAssets.map((asset) => (
+            <option key={asset.uuid} value={asset.uuid}>
+              {asset.relative_path}
+            </option>
+          ))}
+        </select>
+        {isOptional && currentUuid !== "" && (
+          <button
+            type="button"
+            className="ghost-btn icon-mini"
+            title="Clear asset reference"
+            onClick={() => onChange(null, true)}
+          >
+            <X size={11} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface SchemaFieldProps {
   label?: string;
   typePath: string;
+  parentTypePath?: string;
   value: unknown;
   schema: BrpRegistrySchema | null;
+  assets?: AssetRecord[];
   onChange: (next: unknown, immediate?: boolean) => void;
 }
 
 export function SchemaField({
   label,
   typePath,
+  parentTypePath,
   value,
   schema,
+  assets,
   onChange,
 }: SchemaFieldProps) {
   const def: BrpSchemaType | undefined = schema?.[typePath];
@@ -421,8 +566,25 @@ export function SchemaField({
     );
   }
 
-  // 6. Option<T>
+  // 6. AssetUuid / Option<AssetUuid> picker & drop slot
   const optionInner = unwrapOptionInnerPath(typePath);
+  if (
+    typePath === "engine_core::asset_id::AssetUuid" ||
+    optionInner === "engine_core::asset_id::AssetUuid"
+  ) {
+    return (
+      <AssetSlotField
+        label={label}
+        isOptional={optionInner !== null}
+        value={value}
+        assets={assets ?? []}
+        kindFilter={inferAssetKindFilter(parentTypePath, label)}
+        onChange={onChange}
+      />
+    );
+  }
+
+  // 7. Generic Option<T>
   if (optionInner !== null) {
     const isSome = value !== null && value !== undefined;
     return (
@@ -448,8 +610,10 @@ export function SchemaField({
           <div className="nested-indent">
             <SchemaField
               typePath={optionInner}
+              parentTypePath={parentTypePath}
               value={value}
               schema={schema}
+              assets={assets}
               onChange={onChange}
             />
           </div>
@@ -636,8 +800,10 @@ export function SchemaField({
                       key={fieldName}
                       label={fieldName}
                       typePath={child.typePath}
+                      parentTypePath={typePath}
                       value={fieldsObj[fieldName]}
                       schema={schema}
+                      assets={assets}
                       onChange={(nextFieldVal, immediate) =>
                         onChange(
                           {
@@ -667,8 +833,10 @@ export function SchemaField({
                       schema,
                     ).typePath
                   }
+                  parentTypePath={typePath}
                   value={variantPayload}
                   schema={schema}
+                  assets={assets}
                   onChange={(nextInner, immediate) =>
                     onChange({ [activeVariantName]: nextInner }, immediate)
                   }
@@ -684,8 +852,10 @@ export function SchemaField({
                       key={idx}
                       label={`[${idx}]`}
                       typePath={child.typePath}
+                      parentTypePath={typePath}
                       value={arr[idx]}
                       schema={schema}
+                      assets={assets}
                       onChange={(nextItem, immediate) => {
                         const copy = [...arr];
                         copy[idx] = nextItem;
@@ -725,8 +895,10 @@ export function SchemaField({
               key={fieldName}
               label={fieldName}
               typePath={child.typePath}
+              parentTypePath={typePath}
               value={obj[fieldName]}
               schema={schema}
+              assets={assets}
               onChange={(nextFieldVal, immediate) =>
                 onChange({ ...obj, [fieldName]: nextFieldVal }, immediate)
               }
@@ -762,8 +934,10 @@ export function SchemaField({
               key={idx}
               label={label ? `${label}[${idx}]` : `[${idx}]`}
               typePath={child.typePath}
+              parentTypePath={typePath}
               value={arr[idx]}
               schema={schema}
+              assets={assets}
               onChange={(nextItem, immediate) => {
                 const copy = [...arr];
                 copy[idx] = nextItem;

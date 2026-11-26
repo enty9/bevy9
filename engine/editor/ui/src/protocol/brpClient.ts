@@ -1,4 +1,13 @@
 import type {
+  AssetDeleteResult,
+  AssetFolderEntry,
+  AssetImportResult,
+  AssetImportSettings,
+  AssetListParams,
+  AssetRecord,
+  AssetRegistrySnapshot,
+  AssetSpawnInViewportResult,
+  AssetThumbnailResult,
   BrpGetComponentsResponse,
   BrpRegistrySchema,
   ComponentMutationResult,
@@ -28,6 +37,18 @@ interface JsonRpcErrorPayload {
   code: number;
   message: string;
   data?: unknown;
+}
+
+export class BrpRpcError extends Error {
+  constructor(
+    public readonly method: string,
+    public readonly code: number,
+    public readonly rpcMessage: string,
+    public readonly data?: unknown,
+  ) {
+    super(`BRP '${method}' error (${code}): ${rpcMessage}`);
+    this.name = "BrpRpcError";
+  }
 }
 
 interface JsonRpcResponse<T> {
@@ -63,8 +84,11 @@ export class BrpClient {
 
     const payload = (await response.json()) as JsonRpcResponse<T>;
     if (payload.error) {
-      throw new Error(
-        `BRP '${method}' error (${payload.error.code}): ${payload.error.message}`,
+      throw new BrpRpcError(
+        method,
+        payload.error.code,
+        payload.error.message,
+        payload.error.data,
       );
     }
 
@@ -232,5 +256,65 @@ export class BrpClient {
 
   listPrefabs(): Promise<PrefabListResult> {
     return this.call<PrefabListResult>("engine.prefab.list");
+  }
+
+  listAssets(params: AssetListParams = {}): Promise<AssetRegistrySnapshot> {
+    return this.call<AssetRegistrySnapshot>("engine.asset.list", params);
+  }
+
+  importAssets(sourcePaths: string[], targetFolder = ""): Promise<AssetImportResult> {
+    return this.call<AssetImportResult>("engine.asset.import", {
+      source_paths: sourcePaths,
+      target_folder: targetFolder,
+    });
+  }
+
+  moveAsset(uuid: string, newRelativePath: string): Promise<AssetRecord> {
+    return this.call<AssetRecord>("engine.asset.move", {
+      uuid,
+      new_relative_path: newRelativePath,
+    });
+  }
+
+  deleteAsset(uuid: string, force = false): Promise<AssetDeleteResult> {
+    return this.call<AssetDeleteResult>("engine.asset.delete", { uuid, force });
+  }
+
+  createAssetFolder(relativePath: string): Promise<AssetFolderEntry> {
+    return this.call<AssetFolderEntry>("engine.asset.create_folder", {
+      relative_path: relativePath,
+    });
+  }
+
+  updateAssetSettings(
+    uuid: string,
+    importSettings: AssetImportSettings,
+    tags?: string[] | null,
+  ): Promise<AssetRecord> {
+    return this.call<AssetRecord>("engine.asset.update_settings", {
+      uuid,
+      import_settings: importSettings,
+      tags: tags ?? null,
+    });
+  }
+
+  getAssetThumbnail(uuid: string): Promise<AssetThumbnailResult> {
+    return this.call<AssetThumbnailResult>("engine.asset.thumbnail", { uuid });
+  }
+
+  spawnAssetInViewport(
+    uuid: string,
+    x: number,
+    y: number,
+  ): Promise<AssetSpawnInViewportResult> {
+    return this.call<AssetSpawnInViewportResult>("engine.asset.spawn_in_viewport", {
+      uuid,
+      x,
+      y,
+    });
+  }
+
+  rescanAssets(params: AssetListParams = {}): Promise<AssetRegistrySnapshot> {
+    return this.call<AssetRegistrySnapshot>("engine.asset.rescan", params);
   }
 }

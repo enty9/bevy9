@@ -25,6 +25,7 @@ use bevy_ecs::{
 };
 use bevy_time::Time;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
+use engine_assets::AssetRegistry;
 use engine_core::{ProjectManifest, WorldMode};
 use engine_protocol::{
     encode_viewport_frame, ClientIpcMessage, FrameMetrics, GizmoMode, GizmoSnapConfig,
@@ -538,6 +539,14 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
             state: history_state,
         },
     );
+    if let Some(registry) = world.get_resource::<AssetRegistry>() {
+        ipc.send_to(
+            client_id,
+            &ServerIpcMessage::AssetsChanged {
+                revision: registry.revision,
+            },
+        );
+    }
 }
 
 pub(crate) fn publish_ipc_updates(world: &mut World) {
@@ -595,6 +604,16 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
     }
 
     let latest_packet = drain_latest_viewport_frame(world);
+    let assets_changed_rev = world
+        .get_resource_mut::<AssetRegistry>()
+        .and_then(|mut reg| {
+            if reg.dirty {
+                reg.dirty = false;
+                Some(reg.revision)
+            } else {
+                None
+            }
+        });
 
     if client_count == 0 {
         if let Some(current) = world
@@ -662,6 +681,12 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
         ipc.broadcast_message(&ServerIpcMessage::InspectorRefresh {
             guids: refresh_guids,
         });
+    }
+
+    if let Some(revision) = assets_changed_rev
+        && let Some(ipc) = world.get_resource::<EditorIpcServer>()
+    {
+        ipc.broadcast_message(&ServerIpcMessage::AssetsChanged { revision });
     }
 
     if let Some(packet) = latest_packet {

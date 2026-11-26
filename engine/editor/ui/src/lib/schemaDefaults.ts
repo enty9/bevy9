@@ -7,6 +7,8 @@ import type {
 const PROTECTED_COMPONENTS = new Set<string>([
   "engine_core::guid::EntityGuid",
   "engine_scene::components::SceneEntity",
+  "engine_scene::hydration::HydratedGltfModelRoot",
+  "engine_scene::hydration::HydratedTilemapTile",
   "engine_scene::prefab::PrefabInstance",
   "engine_scene::prefab::PrefabMember",
 ]);
@@ -14,6 +16,8 @@ const PROTECTED_COMPONENTS = new Set<string>([
 const INTERNAL_RUNTIME_EXACT = new Set<string>([
   "engine_core::guid::EntityGuid",
   "engine_scene::components::SceneEntity",
+  "engine_scene::hydration::HydratedGltfModelRoot",
+  "engine_scene::hydration::HydratedTilemapTile",
   "engine_scene::prefab::PrefabInstance",
   "engine_scene::prefab::PrefabMember",
   "bevy_transform::components::global_transform::GlobalTransform",
@@ -68,6 +72,7 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     base_color: {
       Srgba: { red: 0.8, green: 0.82, blue: 0.86, alpha: 1.0 },
     },
+    base_color_texture: null,
     metallic: 0.0,
     perceptual_roughness: 0.5,
     emissive: { red: 0.0, green: 0.0, blue: 0.0, alpha: 1.0 },
@@ -84,10 +89,22 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     color: {
       Srgba: { red: 0.95, green: 0.55, blue: 0.25, alpha: 1.0 },
     },
+    texture: null,
+    atlas_index: null,
     custom_size: [64, 64],
     flip_x: false,
     flip_y: false,
   },
+  "engine_scene::components::SceneGltfModel": {
+    asset: null,
+    scene_index: 0,
+    scale_multiplier: 1.0,
+  },
+  "engine_scene::components::SceneTilemap": {
+    asset: null,
+    tile_scale: 1.0,
+  },
+  "engine_core::asset_id::AssetUuid": null,
   "engine_scene::components::SceneCamera3d": {
     fov_degrees: 45.0,
     active: true,

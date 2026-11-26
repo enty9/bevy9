@@ -22,6 +22,7 @@ import {
   startEngineHost,
   subscribeEngineLogs,
   subscribeEngineStatus,
+  subscribeOsFileDrop,
   type EngineHostStatus,
   type EngineLogMessage,
   type ProjectSummary,
@@ -29,6 +30,8 @@ import {
 import { BrpClient } from "./protocol/brpClient";
 import { EditorIpcClient, type IpcConnectionState } from "./protocol/ipcClient";
 import type {
+  AssetRecord,
+  AssetRegistrySnapshot,
   BrpRegistrySchema,
   DecodedViewportFrame,
   EntityPresetKind,
@@ -43,11 +46,13 @@ import type {
   WorldMode,
 } from "./protocol/types";
 import { ConsolePanel } from "./components/ConsolePanel";
+import { ContentBrowserPanel } from "./components/ContentBrowserPanel";
 import {
   DEFAULT_LAYOUT_STATE,
   DockLayout,
   loadSavedLayout,
   persistLayout,
+  type BottomDockTab,
   type DockLayoutState,
 } from "./components/DockLayout";
 import { InspectorPanel } from "./components/InspectorPanel";
@@ -136,6 +141,9 @@ export function App() {
   const [registrySchema, setRegistrySchema] = useState<BrpRegistrySchema | null>(null);
   const [hierarchy, setHierarchy] = useState<SceneTreeNode[]>([]);
   const [prefabs, setPrefabs] = useState<PrefabFileEntry[]>([]);
+  const [assetSnapshot, setAssetSnapshot] = useState<AssetRegistrySnapshot | null>(null);
+  const [activeAssetFolder, setActiveAssetFolder] = useState("");
+  const [activeBottomTab, setActiveBottomTab] = useState<BottomDockTab>("content");
   const [selection, setSelection] = useState<string[]>([]);
   const [viewportState, setViewportState] = useState<ViewportStatePayload>(
     DEFAULT_VIEWPORT_STATE,
@@ -368,10 +376,11 @@ export function App() {
         return;
       }
       try {
-        const [schema, tree, prefabList] = await Promise.all([
+        const [schema, tree, prefabList, assetsSnap] = await Promise.all([
           brpClient.getRegistrySchema(),
           brpClient.getWorldTree(),
           brpClient.listPrefabs(),
+          brpClient.listAssets(),
         ]);
         if (cancelled) {
           return;
@@ -379,6 +388,7 @@ export function App() {
         setRegistrySchema(schema);
         setHierarchy(tree.roots);
         setPrefabs(prefabList.prefabs);
+        setAssetSnapshot(assetsSnap);
         setSceneName(tree.scene_name);
         setScenePath(tree.scene_path);
       } catch (err) {
@@ -400,11 +410,105 @@ export function App() {
     };
   }, [brpClient, ipcState, appendLog]);
 
+  const refreshAssets = useCallback(async () => {
+    if (!brpClient) {
+      return;
+    }
+    try {
+      const snap = await brpClient.listAssets();
+      setAssetSnapshot(snap);
+    } catch {
+      // Ignored; next IPC welcome or reconnect syncs state.
+    }
+  }, [brpClient]);
+
+  useEffect(() => {
+    if (!ipcClient || !brpClient) {
+      return;
+    }
+    return ipcClient.onAssetsChanged(() => {
+      void refreshAssets();
+    });
+  }, [ipcClient, brpClient, refreshAssets]);
+
+  const handleImportAssetPaths = useCallback(
+    async (paths: string[], targetFolder: string) => {
+      if (!brpClient || paths.length === 0) {
+        return;
+      }
+      try {
+        const res = await brpClient.importAssets(paths, targetFolder);
+        await refreshAssets();
+        appendLog({
+          timestamp_ms: Date.now(),
+          level: "info",
+          target: "assets",
+          message: `Imported ${res.imported.length} asset(s) into assets/${targetFolder}`,
+        });
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, refreshAssets, appendLog],
+  );
+
+  useEffect(() => {
+    if (!brpClient || ipcState !== "connected") {
+      return;
+    }
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void subscribeOsFileDrop((paths) => {
+      void handleImportAssetPaths(paths, activeAssetFolder);
+    }).then((fn) => {
+      if (cancelled) {
+        fn();
+      } else {
+        unlisten = fn;
+      }
+    });
+    return () => {
+      cancelled = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [brpClient, ipcState, activeAssetFolder, handleImportAssetPaths]);
+
+  const handleSpawnAssetInViewport = useCallback(
+    async (asset: AssetRecord, vx?: number, vy?: number) => {
+      if (!brpClient) {
+        return;
+      }
+      try {
+        const res = await brpClient.spawnAssetInViewport(
+          asset.uuid,
+          vx ?? viewportState.width * 0.5,
+          vy ?? viewportState.height * 0.5,
+        );
+        setSceneDirty(true);
+        const tree = await brpClient.getWorldTree();
+        setHierarchy(tree.roots);
+        setSelection([res.guid]);
+      } catch (err) {
+        setBannerError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [brpClient, viewportState.width, viewportState.height],
+  );
+
+  const consoleAlertCount = useMemo(
+    () => logs.filter((l) => l.level === "error" || l.level === "warn").length,
+    [logs],
+  );
+
   const handleStartForProject = useCallback(async (projectDir: string) => {
     setBusy(true);
     setBannerError(null);
     setSelection([]);
     setHierarchy([]);
+    setAssetSnapshot(null);
+    setActiveAssetFolder("");
     setRegistrySchema(null);
     try {
       const loaded = await loadProjectMetadata(projectDir);
@@ -1042,13 +1146,34 @@ export function App() {
             height={viewportState.height}
             ipcState={ipcState}
             gizmoState={gizmoState}
+            assets={assetSnapshot?.assets ?? []}
             subscribeFrames={subscribeFrames}
             onViewportInput={handleViewportInput}
             onToggleViewportMode={handleToggleViewportMode}
             onChangeGizmoState={handleChangeGizmoState}
+            onDropAsset={(asset, vx, vy) =>
+              void handleSpawnAssetInViewport(asset, vx, vy)
+            }
           />
         }
-        bottom={
+        activeBottomTab={activeBottomTab}
+        onChangeBottomTab={setActiveBottomTab}
+        consoleBadgeCount={consoleAlertCount}
+        bottomContentBrowser={
+          <ContentBrowserPanel
+            snapshot={assetSnapshot}
+            currentFolder={activeAssetFolder}
+            onChangeFolder={setActiveAssetFolder}
+            brpClient={brpClient}
+            onImportPaths={handleImportAssetPaths}
+            onRefreshAssets={refreshAssets}
+            onOpenScenePath={(path) => void handleOpenScene(path)}
+            onSpawnAssetAtCenter={(asset) =>
+              void handleSpawnAssetInViewport(asset)
+            }
+          />
+        }
+        bottomConsole={
           <ConsolePanel
             logs={logs}
             onClear={() => {
@@ -1065,6 +1190,7 @@ export function App() {
             selectedCount={selection.length}
             brpClient={brpClient}
             registrySchema={registrySchema}
+            assets={assetSnapshot?.assets ?? []}
             inspectorRevision={inspectorRevision}
             onComponentChanged={(refreshTree) =>
               void handleComponentChanged(refreshTree)

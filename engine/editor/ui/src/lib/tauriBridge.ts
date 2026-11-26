@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save } from "@tauri-apps/plugin-dialog";
 
 export interface SceneFileEntry {
@@ -202,4 +203,37 @@ export async function pickOpenPrefabFile(defaultPath?: string): Promise<string |
     filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
   });
   return typeof selected === "string" ? selected : null;
+}
+
+export async function pickImportAssetFiles(): Promise<string[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  const selected = await open({
+    multiple: true,
+    title: "Import Assets",
+    filters: [
+      {
+        name: "Supported Assets",
+        extensions: ["png", "bmp", "tga", "glb", "gltf", "ron", "rhai"],
+      },
+    ],
+  });
+  if (Array.isArray(selected)) {
+    return selected.filter((p): p is string => typeof p === "string");
+  }
+  return typeof selected === "string" ? [selected] : [];
+}
+
+export async function subscribeOsFileDrop(
+  handler: (paths: string[]) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) {
+    return () => {};
+  }
+  return getCurrentWebview().onDragDropEvent((event) => {
+    if (event.payload.type === "drop" && event.payload.paths.length > 0) {
+      handler(event.payload.paths);
+    }
+  });
 }

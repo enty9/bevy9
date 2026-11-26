@@ -18,6 +18,7 @@ import {
 } from "../lib/schemaDefaults";
 import type { BrpClient } from "../protocol/brpClient";
 import type {
+  AssetRecord,
   BrpRegistrySchema,
   PrefabInstanceData,
   PrefabMemberData,
@@ -31,6 +32,7 @@ interface InspectorPanelProps {
   selectedCount: number;
   brpClient: BrpClient | null;
   registrySchema: BrpRegistrySchema | null;
+  assets?: AssetRecord[];
   inspectorRevision?: number;
   onComponentChanged: (refreshTree: boolean) => void;
   onDeleteEntity: (node: SceneTreeNode) => void;
@@ -50,6 +52,7 @@ export function InspectorPanel({
   selectedCount,
   brpClient,
   registrySchema,
+  assets,
   inspectorRevision = 0,
   onComponentChanged,
   onDeleteEntity,
@@ -664,6 +667,7 @@ export function InspectorPanel({
                         typePath={typePath}
                         value={componentValues[typePath]}
                         schema={registrySchema}
+                        assets={assets}
                         onChange={(nextVal, immediate) =>
                           handleFieldMutate(typePath, nextVal, immediate)
                         }
