@@ -175,6 +175,22 @@ export interface HistoryStepResult {
   state: HistoryStatePayload;
 }
 
+export type PieState = "editing" | "playing" | "paused";
+
+export interface PieStatePayload {
+  state: PieState;
+  fixed_steps: number;
+  frame_count: number;
+  elapsed_secs: number;
+  using_scene_camera: boolean;
+}
+
+export interface PieStepParams {
+  steps?: number;
+}
+
+export type PieStateResult = PieStatePayload;
+
 export type ServerIpcMessage =
   | ({ type: "welcome" } & WelcomePayload)
   | { type: "hierarchy_snapshot"; roots: SceneTreeNode[] }
@@ -183,6 +199,7 @@ export type ServerIpcMessage =
   | ({ type: "gizmo_state_changed" } & GizmoStatePayload)
   | { type: "inspector_refresh"; guids: string[] }
   | { type: "history_state_changed"; state: HistoryStatePayload }
+  | { type: "pie_state_changed"; state: PieStatePayload }
   | { type: "assets_changed"; revision: number }
   | { type: "log"; entry: EditorLogEntry }
   | { type: "metrics"; metrics: FrameMetrics }

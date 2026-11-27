@@ -2218,3 +2218,178 @@ button.ghost-btn:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }
+
+/* Stage 6.1: Play-In-Editor (PIE) transport, viewport frame, and banners */
+.pie-transport {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 6px;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.pie-transport.playing {
+  border-color: rgba(56, 201, 118, 0.65);
+  box-shadow: 0 0 0 1px rgba(56, 201, 118, 0.2);
+}
+
+.pie-transport.paused {
+  border-color: rgba(242, 169, 59, 0.7);
+  box-shadow: 0 0 0 1px rgba(242, 169, 59, 0.2);
+}
+
+.toolbar .pie-btn {
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.toolbar .pie-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border-subtle);
+}
+
+.toolbar .pie-btn.pie-play:not(:disabled) {
+  color: var(--accent-green);
+}
+
+.toolbar .pie-btn.pie-play.active {
+  background: rgba(56, 201, 118, 0.2);
+  border-color: rgba(56, 201, 118, 0.55);
+  color: #82f0ae;
+  opacity: 1;
+}
+
+.toolbar .pie-btn.pie-pause.active {
+  background: rgba(242, 169, 59, 0.2);
+  border-color: rgba(242, 169, 59, 0.6);
+  color: #ffd083;
+  opacity: 1;
+}
+
+.toolbar .pie-btn.pie-stop.armed:not(:disabled) {
+  color: var(--accent-red);
+}
+
+.toolbar .pie-btn.pie-stop.armed:hover:not(:disabled) {
+  background: rgba(240, 90, 90, 0.2);
+  border-color: rgba(240, 90, 90, 0.55);
+  color: #ffb8b8;
+}
+
+.viewport-panel.pie-playing .viewport-container::after,
+.viewport-panel.pie-paused .viewport-container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.viewport-panel.pie-playing .viewport-container::after {
+  box-shadow: inset 0 0 0 2px rgba(56, 201, 118, 0.8);
+}
+
+.viewport-panel.pie-paused .viewport-container::after {
+  box-shadow: inset 0 0 0 2px rgba(242, 169, 59, 0.85);
+}
+
+.pie-status-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border-subtle);
+  min-width: 0;
+}
+
+.pie-status-strip.playing {
+  background: rgba(56, 201, 118, 0.14);
+  border-bottom-color: rgba(56, 201, 118, 0.45);
+  color: #c8f7da;
+}
+
+.pie-status-strip.paused {
+  background: rgba(242, 169, 59, 0.15);
+  border-bottom-color: rgba(242, 169, 59, 0.5);
+  color: #ffe2ad;
+}
+
+.pie-status-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.pie-status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.04em;
+}
+
+.pie-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.pie-status-strip.playing .pie-status-dot {
+  background: var(--accent-green);
+  box-shadow: 0 0 6px rgba(56, 201, 118, 0.85);
+}
+
+.pie-status-strip.paused .pie-status-dot {
+  background: var(--accent-amber);
+  box-shadow: 0 0 6px rgba(242, 169, 59, 0.8);
+}
+
+.pie-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(14, 17, 23, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pie-status-note {
+  color: inherit;
+  opacity: 0.85;
+  min-width: 0;
+}
+
+.inspector-pie-banner {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 11px;
+  line-height: 1.35;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.inspector-pie-banner.playing {
+  background: rgba(56, 201, 118, 0.12);
+  border-bottom-color: rgba(56, 201, 118, 0.35);
+  color: #c8f7da;
+}
+
+.inspector-pie-banner.paused {
+  background: rgba(242, 169, 59, 0.13);
+  border-bottom-color: rgba(242, 169, 59, 0.4);
+  color: #ffe2ad;
+}

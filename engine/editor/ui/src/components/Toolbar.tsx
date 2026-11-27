@@ -3,11 +3,14 @@ import {
   FilePlus2,
   FolderOpen,
   LayoutGrid,
+  Pause,
   Play,
   Redo2,
   RotateCw,
   Save,
   SaveAll,
+  Square,
+  StepForward,
   Undo2,
 } from "lucide-react";
 import type { EngineHostStatus, ProjectSummary } from "../lib/tauriBridge";
@@ -17,6 +20,7 @@ import { GameplayControls } from "./GameplayControls";
 import type {
   FrameMetrics,
   HistoryStatePayload,
+  PieStatePayload,
   ViewportCameraMode,
   WorldMode,
 } from "../protocol/types";
@@ -33,6 +37,8 @@ interface ToolbarProps {
   sceneDirty: boolean;
   cameraMode: ViewportCameraMode;
   historyState: HistoryStatePayload;
+  pieState: PieStatePayload;
+  pieBusy: boolean;
   metrics: FrameMetrics;
   busy: boolean;
   onSelectProject: (projectDir: string) => void;
@@ -43,6 +49,10 @@ interface ToolbarProps {
   onSaveSceneAs: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onPiePlay: () => void;
+  onPiePause: () => void;
+  onPieStep: () => void;
+  onPieStop: () => void;
   onSetCameraMode: (mode: ViewportCameraMode) => void;
   onTogglePhysicsDebug: (enabled: boolean) => Promise<void>;
   onStartHost: () => void;
@@ -62,6 +72,8 @@ export function Toolbar({
   sceneDirty,
   cameraMode,
   historyState,
+  pieState,
+  pieBusy,
   metrics,
   busy,
   onSelectProject,
@@ -72,6 +84,10 @@ export function Toolbar({
   onSaveSceneAs,
   onUndo,
   onRedo,
+  onPiePlay,
+  onPiePause,
+  onPieStep,
+  onPieStop,
   onSetCameraMode,
   onTogglePhysicsDebug,
   onStartHost,
@@ -82,6 +98,16 @@ export function Toolbar({
   const [newSceneName, setNewSceneName] = useState("Untitled Scene");
   const [newWorldMode, setNewWorldMode] = useState<WorldMode>("3d");
   const newMenuRef = useRef<HTMLDivElement>(null);
+
+  const pieActive = pieState.state !== "editing";
+  const isPlaying = pieState.state === "playing";
+  const isPaused = pieState.state === "paused";
+
+  useEffect(() => {
+    if (pieActive) {
+      setNewPopoverOpen(false);
+    }
+  }, [pieActive]);
 
   useEffect(() => {
     if (!newPopoverOpen) return;
@@ -185,8 +211,12 @@ export function Toolbar({
         <div className="popover-anchor" ref={newMenuRef}>
           <button
             type="button"
-            disabled={busy || !hostRunning}
-            title="Create new scene"
+            disabled={busy || !hostRunning || pieActive}
+            title={
+              pieActive
+                ? "New scene is disabled during Play-In-Editor (stop PIE first)"
+                : "Create new scene"
+            }
             onClick={() => {
               setNewWorldMode(cameraMode === "2d" ? "2d" : "3d");
               setNewPopoverOpen((open) => !open);
@@ -236,8 +266,12 @@ export function Toolbar({
 
         <button
           type="button"
-          disabled={busy || !hostRunning}
-          title="Open .level.ron scene file"
+          disabled={busy || !hostRunning || pieActive}
+          title={
+            pieActive
+              ? "Open scene is disabled during Play-In-Editor (stop PIE first)"
+              : "Open .level.ron scene file"
+          }
           onClick={() => onOpenScene()}
         >
           <FolderOpen size={14} />
@@ -247,8 +281,12 @@ export function Toolbar({
         <button
           type="button"
           className="primary"
-          disabled={busy || !hostRunning}
-          title="Save active scene (Ctrl+S)"
+          disabled={busy || !hostRunning || pieActive}
+          title={
+            pieActive
+              ? "Save scene is disabled during Play-In-Editor (stop PIE first)"
+              : "Save active scene (Ctrl+S)"
+          }
           onClick={onSaveScene}
         >
           <Save size={14} />
@@ -257,8 +295,12 @@ export function Toolbar({
 
         <button
           type="button"
-          disabled={busy || !hostRunning}
-          title="Save active scene to a new .level.ron file"
+          disabled={busy || !hostRunning || pieActive}
+          title={
+            pieActive
+              ? "Save As is disabled during Play-In-Editor (stop PIE first)"
+              : "Save active scene to a new .level.ron file"
+          }
           aria-label="Save As"
           onClick={onSaveSceneAs}
         >
@@ -269,11 +311,13 @@ export function Toolbar({
 
         <button
           type="button"
-          disabled={busy || !hostRunning || !historyState.can_undo}
+          disabled={busy || !hostRunning || pieActive || !historyState.can_undo}
           title={
-            historyState.undo_label
-              ? `Undo: ${historyState.undo_label} (Ctrl+Z)`
-              : "Undo (Ctrl+Z)"
+            pieActive
+              ? "Undo is disabled during Play-In-Editor (stop PIE first)"
+              : historyState.undo_label
+                ? `Undo: ${historyState.undo_label} (Ctrl+Z)`
+                : "Undo (Ctrl+Z)"
           }
           aria-label="Undo"
           onClick={onUndo}
@@ -283,16 +327,71 @@ export function Toolbar({
 
         <button
           type="button"
-          disabled={busy || !hostRunning || !historyState.can_redo}
+          disabled={busy || !hostRunning || pieActive || !historyState.can_redo}
           title={
-            historyState.redo_label
-              ? `Redo: ${historyState.redo_label} (Ctrl+Y)`
-              : "Redo (Ctrl+Shift+Z / Ctrl+Y)"
+            pieActive
+              ? "Redo is disabled during Play-In-Editor (stop PIE first)"
+              : historyState.redo_label
+                ? `Redo: ${historyState.redo_label} (Ctrl+Y)`
+                : "Redo (Ctrl+Shift+Z / Ctrl+Y)"
           }
           aria-label="Redo"
           onClick={onRedo}
         >
           <Redo2 size={14} />
+        </button>
+      </div>
+
+      <div
+        className={`toolbar-section pie-transport ${isPlaying ? "playing" : isPaused ? "paused" : ""}`}
+        role="group"
+        aria-label="Play-In-Editor controls"
+      >
+        <button
+          type="button"
+          className={`pie-btn pie-play ${isPlaying ? "active" : ""}`}
+          disabled={!hostRunning || busy || pieBusy || isPlaying}
+          title={
+            isPaused
+              ? "Resume Play-In-Editor (F5)"
+              : isPlaying
+                ? "Play-In-Editor is running"
+                : "Play scene in editor (F5)"
+          }
+          onClick={onPiePlay}
+        >
+          <Play size={13} />
+          {isPaused ? "Resume" : "Play"}
+        </button>
+        <button
+          type="button"
+          className={`pie-btn pie-pause ${isPaused ? "active" : ""}`}
+          disabled={!hostRunning || busy || pieBusy || !isPlaying}
+          title="Pause Play-In-Editor (F6)"
+          aria-label="Pause"
+          onClick={onPiePause}
+        >
+          <Pause size={13} />
+        </button>
+        <button
+          type="button"
+          className="pie-btn pie-step"
+          disabled={!hostRunning || busy || pieBusy}
+          title="Step one fixed simulation tick (F10)"
+          aria-label="Step"
+          onClick={onPieStep}
+        >
+          <StepForward size={13} />
+        </button>
+        <button
+          type="button"
+          className={`pie-btn pie-stop ${pieActive ? "armed" : ""}`}
+          disabled={!hostRunning || busy || pieBusy || !pieActive}
+          title="Stop Play-In-Editor and restore scene (Shift+F5)"
+          aria-label="Stop"
+          onClick={onPieStop}
+        >
+          <Square size={12} />
         </button>
       </div>
 
@@ -302,11 +401,18 @@ export function Toolbar({
           {sceneDirty ? " *" : ""}
         </span>
 
-        <div className="segmented" title="Editor viewport camera mode">
+        <div
+          className="segmented"
+          title={
+            pieActive
+              ? "Camera mode toggle is disabled during Play-In-Editor"
+              : "Editor viewport camera mode"
+          }
+        >
           <button
             type="button"
             className={`seg-btn ${cameraMode === "3d" ? "active" : ""}`}
-            disabled={!hostRunning}
+            disabled={!hostRunning || pieActive}
             onClick={() => onSetCameraMode("3d")}
           >
             3D
@@ -314,7 +420,7 @@ export function Toolbar({
           <button
             type="button"
             className={`seg-btn ${cameraMode === "2d" ? "active" : ""}`}
-            disabled={!hostRunning}
+            disabled={!hostRunning || pieActive}
             onClick={() => onSetCameraMode("2d")}
           >
             2D

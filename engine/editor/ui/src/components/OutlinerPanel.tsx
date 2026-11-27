@@ -27,6 +27,7 @@ interface OutlinerPanelProps {
   selectedGuids: string[];
   prefabs: PrefabFileEntry[];
   connected: boolean;
+  pieActive?: boolean;
   onSelect: (guids: string[]) => void;
   onToggleVisibility: (node: SceneTreeNode) => void;
   onSpawnPreset: (preset: EntityPresetKind, parentGuid: string | null) => void;
@@ -128,6 +129,7 @@ export function OutlinerPanel({
   selectedGuids,
   prefabs,
   connected,
+  pieActive = false,
   onSelect,
   onToggleVisibility,
   onSpawnPreset,
@@ -190,7 +192,7 @@ export function OutlinerPanel({
   }
 
   function handleContainerKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
-    if (editingGuid !== null) {
+    if (editingGuid !== null || pieActive) {
       return;
     }
     if (event.key === "Delete" && selectedGuids.length > 0 && connected) {

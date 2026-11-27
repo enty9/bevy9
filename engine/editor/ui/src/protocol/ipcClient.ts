@@ -7,6 +7,7 @@ import {
   type FrameMetrics,
   type GizmoStatePayload,
   type HistoryStatePayload,
+  type PieStatePayload,
   type SceneTreeNode,
   type ServerIpcMessage,
   type ViewportCameraMode,
@@ -35,6 +36,7 @@ export class EditorIpcClient {
   private readonly gizmoStateListeners = new Set<Listener<GizmoStatePayload>>();
   private readonly inspectorRefreshListeners = new Set<Listener<string[]>>();
   private readonly historyStateListeners = new Set<Listener<HistoryStatePayload>>();
+  private readonly pieStateListeners = new Set<Listener<PieStatePayload>>();
   private readonly assetsChangedListeners = new Set<Listener<number>>();
   private readonly metricsListeners = new Set<Listener<FrameMetrics>>();
   private readonly logListeners = new Set<Listener<EditorLogEntry>>();
@@ -149,6 +151,13 @@ export class EditorIpcClient {
     this.historyStateListeners.add(listener);
     return () => {
       this.historyStateListeners.delete(listener);
+    };
+  }
+
+  onPieState(listener: Listener<PieStatePayload>): () => void {
+    this.pieStateListeners.add(listener);
+    return () => {
+      this.pieStateListeners.delete(listener);
     };
   }
 
@@ -290,6 +299,11 @@ export class EditorIpcClient {
         break;
       case "history_state_changed":
         for (const listener of this.historyStateListeners) {
+          listener(parsed.state);
+        }
+        break;
+      case "pie_state_changed":
+        for (const listener of this.pieStateListeners) {
           listener(parsed.state);
         }
         break;

@@ -23,6 +23,7 @@ import type { BrpClient } from "../protocol/brpClient";
 import type {
   AssetRecord,
   BrpRegistrySchema,
+  PieState,
   PrefabInstanceData,
   PrefabMemberData,
   SceneTreeNode,
@@ -38,6 +39,7 @@ interface InspectorPanelProps {
   assets?: AssetRecord[];
   sceneEntities?: SceneEntityOption[];
   inspectorRevision?: number;
+  pieState?: PieState;
   onComponentChanged: (refreshTree: boolean) => void;
   onDeleteEntity: (node: SceneTreeNode) => void;
   onSaveAsPrefab: (node: SceneTreeNode) => void;
@@ -59,6 +61,7 @@ export function InspectorPanel({
   assets,
   sceneEntities,
   inspectorRevision = 0,
+  pieState = "editing",
   onComponentChanged,
   onDeleteEntity,
   onSaveAsPrefab,
@@ -67,6 +70,7 @@ export function InspectorPanel({
   onRevertPrefabComponent,
   onCollapse,
 }: InspectorPanelProps) {
+  const pieActive = pieState !== "editing";
   const [showRuntime, setShowRuntime] = useState(false);
   const [collapsedCards, setCollapsedCards] = useState<Set<string>>(
     () => new Set(),
@@ -468,6 +472,16 @@ export function InspectorPanel({
         </div>
       </div>
 
+      {pieActive && (
+        <div
+          className={`inspector-pie-banner ${pieState === "playing" ? "playing" : "paused"}`}
+          role="status"
+        >
+          <strong>PIE {pieState === "playing" ? "Playing" : "Paused"}:</strong>{" "}
+          Runtime component edits are temporary and revert on Stop.
+        </div>
+      )}
+
       {!selectedNode ? (
         <div className="panel-body center-empty">
           <div className="muted">
@@ -484,7 +498,12 @@ export function InspectorPanel({
                   <button
                     type="button"
                     className="ghost-btn icon-mini"
-                    title="Save subtree as .prefab.ron"
+                    disabled={pieActive}
+                    title={
+                      pieActive
+                        ? "Saving prefabs is disabled during Play-In-Editor"
+                        : "Save subtree as .prefab.ron"
+                    }
                     onClick={() => onSaveAsPrefab(selectedNode)}
                   >
                     <PackagePlus size={13} />
@@ -525,8 +544,12 @@ export function InspectorPanel({
                 <button
                   type="button"
                   className="primary"
-                  disabled={!brpClient}
-                  title="Write instance changes back to .prefab.ron and propagate to sibling instances"
+                  disabled={!brpClient || pieActive}
+                  title={
+                    pieActive
+                      ? "Applying changes to prefab assets is disabled during Play-In-Editor"
+                      : "Write instance changes back to .prefab.ron and propagate to sibling instances"
+                  }
                   onClick={() => onApplyPrefab(selectedNode)}
                 >
                   Apply to Prefab

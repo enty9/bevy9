@@ -14,6 +14,8 @@ import type {
   DeleteEntityResult,
   HistoryStatePayload,
   HistoryStepResult,
+  PieStateResult,
+  PieStepParams,
   PrefabApplyResult,
   PrefabListResult,
   PrefabRevertResult,
@@ -316,5 +318,27 @@ export class BrpClient {
 
   rescanAssets(params: AssetListParams = {}): Promise<AssetRegistrySnapshot> {
     return this.call<AssetRegistrySnapshot>("engine.asset.rescan", params);
+  }
+
+  piePlay(): Promise<PieStateResult> {
+    return this.call<PieStateResult>("engine.pie.play");
+  }
+
+  piePause(): Promise<PieStateResult> {
+    return this.call<PieStateResult>("engine.pie.pause");
+  }
+
+  pieStep(params: PieStepParams = {}): Promise<PieStateResult> {
+    return this.call<PieStateResult>("engine.pie.step", {
+      steps: params.steps ?? 1,
+    });
+  }
+
+  pieStop(): Promise<PieStateResult> {
+    return this.call<PieStateResult>("engine.pie.stop");
+  }
+
+  getPieState(): Promise<PieStateResult> {
+    return this.call<PieStateResult>("engine.pie.state");
   }
 }

@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Box,
+  Camera,
   ChevronDown,
   ExternalLink,
   Magnet,
@@ -30,6 +31,7 @@ import type {
   GizmoSnapConfig,
   GizmoStatePayload,
   InputModifiers,
+  PieStatePayload,
   PointerButtonCode,
   ViewportCameraMode,
   ViewportInputEvent,
@@ -46,6 +48,8 @@ interface ViewportPanelProps {
   height: number;
   ipcState: IpcConnectionState;
   gizmoState: GizmoStatePayload;
+  pieState: PieStatePayload;
+  focusRequestToken?: number;
   physicsDebug?: boolean;
   assets?: AssetRecord[];
   subscribeFrames: FrameSubscriber;
@@ -95,6 +99,8 @@ export function ViewportPanel({
   height,
   ipcState,
   gizmoState,
+  pieState,
+  focusRequestToken = 0,
   physicsDebug = false,
   assets,
   subscribeFrames,
@@ -104,6 +110,9 @@ export function ViewportPanel({
   onChangeGizmoState,
   onDropAsset,
 }: ViewportPanelProps) {
+  const pieActive = pieState.state !== "editing";
+  const isPlaying = pieState.state === "playing";
+  const isPaused = pieState.state === "paused";
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const snapMenuRef = useRef<HTMLDivElement | null>(null);
@@ -123,6 +132,24 @@ export function ViewportPanel({
     width,
     height,
   });
+
+  useEffect(() => {
+    if (pieActive) {
+      setSnapPopoverOpen(false);
+    }
+  }, [pieActive]);
+
+  useEffect(() => {
+    if (focusRequestToken <= 0 || viewportMode !== "offscreen") {
+      return;
+    }
+    const rafId = window.requestAnimationFrame(() => {
+      canvasRef.current?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [focusRequestToken, viewportMode]);
 
   useEffect(() => {
     if (!snapPopoverOpen) {
@@ -408,6 +435,10 @@ export function ViewportPanel({
     if (event.ctrlKey || event.metaKey) {
       return;
     }
+    // Let global PIE transport shortcuts bubble cleanly without forwarding them as game keys.
+    if (event.code === "F5" || event.code === "F6" || event.code === "F10") {
+      return;
+    }
     if (
       event.code === "Space" ||
       event.code.startsWith("Arrow")
@@ -426,6 +457,9 @@ export function ViewportPanel({
   }
 
   function handleKeyUp(event: ReactKeyboardEvent<HTMLCanvasElement>) {
+    if (event.code === "F5" || event.code === "F6" || event.code === "F10") {
+      return;
+    }
     onViewportInput({
       kind: "key",
       code: event.code,
@@ -444,7 +478,9 @@ export function ViewportPanel({
   }
 
   return (
-    <div className="panel">
+    <div
+      className={`panel viewport-panel ${isPlaying ? "pie-playing" : isPaused ? "pie-paused" : ""}`}
+    >
       <div className="panel-header">
         <div className="panel-actions viewport-title-group">
           <span className="truncate">Viewport · {sceneName}</span>
@@ -455,126 +491,130 @@ export function ViewportPanel({
         </div>
 
         <div className="gizmo-bar">
-          <div className="segmented" role="group" aria-label="Transform Gizmo Mode">
-            <button
-              type="button"
-              className={gizmoState.mode === "translate" ? "seg-btn active" : "seg-btn"}
-              title="Move Gizmo (W)"
-              onClick={() => setGizmoMode("translate")}
-            >
-              <Move size={12} /> Move
-            </button>
-            <button
-              type="button"
-              className={gizmoState.mode === "rotate" ? "seg-btn active" : "seg-btn"}
-              title="Rotate Gizmo (E)"
-              onClick={() => setGizmoMode("rotate")}
-            >
-              <RotateCw size={12} /> Rotate
-            </button>
-            <button
-              type="button"
-              className={gizmoState.mode === "scale" ? "seg-btn active" : "seg-btn"}
-              title="Scale Gizmo (R)"
-              onClick={() => setGizmoMode("scale")}
-            >
-              <Maximize2 size={12} /> Scale
-            </button>
-          </div>
-
-          {cameraMode === "3d" && (
-            <button
-              type="button"
-              className={gizmoState.space === "local" ? "primary" : ""}
-              title="Toggle World / Local transform space"
-              onClick={toggleGizmoSpace}
-            >
-              {gizmoState.space === "local" ? "Local" : "World"}
-            </button>
-          )}
-
-          <div ref={snapMenuRef} className="popover-anchor">
-            <div className="segmented">
-              <button
-                type="button"
-                className={gizmoState.snap.enabled ? "seg-btn active" : "seg-btn"}
-                title="Toggle grid/angle/scale snapping (Ctrl holds temporary snap)"
-                onClick={toggleSnapEnabled}
-              >
-                <Magnet size={12} /> Snap
-              </button>
-              <button
-                type="button"
-                className={snapPopoverOpen ? "seg-btn active" : "seg-btn"}
-                title="Configure snap increments"
-                onClick={() => setSnapPopoverOpen((open) => !open)}
-              >
-                <ChevronDown size={12} />
-              </button>
-            </div>
-
-            {snapPopoverOpen && (
-              <div className="popover-card gizmo-snap-popover">
-                <div className="popover-title">Gizmo Snapping</div>
-                <label className="option-toggle">
-                  <input
-                    type="checkbox"
-                    checked={gizmoState.snap.enabled}
-                    onChange={toggleSnapEnabled}
-                  />
-                  <span>Enable Snap</span>
-                </label>
-                <label className="snap-row">
-                  <span>Move 3D (m)</span>
-                  <input
-                    type="number"
-                    min={0.01}
-                    step={0.1}
-                    value={gizmoState.snap.translate_step}
-                    onChange={(e) =>
-                      updateSnapNumber("translate_step", e.target.value)
-                    }
-                  />
-                </label>
-                <label className="snap-row">
-                  <span>Move 2D (px)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={gizmoState.snap.translate_step_2d}
-                    onChange={(e) =>
-                      updateSnapNumber("translate_step_2d", e.target.value)
-                    }
-                  />
-                </label>
-                <label className="snap-row">
-                  <span>Rotate (deg)</span>
-                  <input
-                    type="number"
-                    min={1}
-                    step={5}
-                    value={gizmoState.snap.rotate_step_degrees}
-                    onChange={(e) =>
-                      updateSnapNumber("rotate_step_degrees", e.target.value)
-                    }
-                  />
-                </label>
-                <label className="snap-row">
-                  <span>Scale</span>
-                  <input
-                    type="number"
-                    min={0.01}
-                    step={0.05}
-                    value={gizmoState.snap.scale_step}
-                    onChange={(e) =>
-                      updateSnapNumber("scale_step", e.target.value)
-                    }
-                  />
-                </label>
+          {!pieActive && (
+            <>
+              <div className="segmented" role="group" aria-label="Transform Gizmo Mode">
+                <button
+                  type="button"
+                  className={gizmoState.mode === "translate" ? "seg-btn active" : "seg-btn"}
+                  title="Move Gizmo (W)"
+                  onClick={() => setGizmoMode("translate")}
+                >
+                  <Move size={12} /> Move
+                </button>
+                <button
+                  type="button"
+                  className={gizmoState.mode === "rotate" ? "seg-btn active" : "seg-btn"}
+                  title="Rotate Gizmo (E)"
+                  onClick={() => setGizmoMode("rotate")}
+                >
+                  <RotateCw size={12} /> Rotate
+                </button>
+                <button
+                  type="button"
+                  className={gizmoState.mode === "scale" ? "seg-btn active" : "seg-btn"}
+                  title="Scale Gizmo (R)"
+                  onClick={() => setGizmoMode("scale")}
+                >
+                  <Maximize2 size={12} /> Scale
+                </button>
               </div>
-            )}
-          </div>
+
+              {cameraMode === "3d" && (
+                <button
+                  type="button"
+                  className={gizmoState.space === "local" ? "primary" : ""}
+                  title="Toggle World / Local transform space"
+                  onClick={toggleGizmoSpace}
+                >
+                  {gizmoState.space === "local" ? "Local" : "World"}
+                </button>
+              )}
+
+              <div ref={snapMenuRef} className="popover-anchor">
+                <div className="segmented">
+                  <button
+                    type="button"
+                    className={gizmoState.snap.enabled ? "seg-btn active" : "seg-btn"}
+                    title="Toggle grid/angle/scale snapping (Ctrl holds temporary snap)"
+                    onClick={toggleSnapEnabled}
+                  >
+                    <Magnet size={12} /> Snap
+                  </button>
+                  <button
+                    type="button"
+                    className={snapPopoverOpen ? "seg-btn active" : "seg-btn"}
+                    title="Configure snap increments"
+                    onClick={() => setSnapPopoverOpen((open) => !open)}
+                  >
+                    <ChevronDown size={12} />
+                  </button>
+                </div>
+
+                {snapPopoverOpen && (
+                  <div className="popover-card gizmo-snap-popover">
+                    <div className="popover-title">Gizmo Snapping</div>
+                    <label className="option-toggle">
+                      <input
+                        type="checkbox"
+                        checked={gizmoState.snap.enabled}
+                        onChange={toggleSnapEnabled}
+                      />
+                      <span>Enable Snap</span>
+                    </label>
+                    <label className="snap-row">
+                      <span>Move 3D (m)</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step={0.1}
+                        value={gizmoState.snap.translate_step}
+                        onChange={(e) =>
+                          updateSnapNumber("translate_step", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="snap-row">
+                      <span>Move 2D (px)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={gizmoState.snap.translate_step_2d}
+                        onChange={(e) =>
+                          updateSnapNumber("translate_step_2d", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="snap-row">
+                      <span>Rotate (deg)</span>
+                      <input
+                        type="number"
+                        min={1}
+                        step={5}
+                        value={gizmoState.snap.rotate_step_degrees}
+                        onChange={(e) =>
+                          updateSnapNumber("rotate_step_degrees", e.target.value)
+                        }
+                      />
+                    </label>
+                    <label className="snap-row">
+                      <span>Scale</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step={0.05}
+                        value={gizmoState.snap.scale_step}
+                        onChange={(e) =>
+                          updateSnapNumber("scale_step", e.target.value)
+                        }
+                      />
+                    </label>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {onTogglePhysicsDebug && (
             <button
@@ -613,6 +653,44 @@ export function ViewportPanel({
           </button>
         </div>
       </div>
+
+      {pieActive && (
+        <div
+          className={`pie-status-strip ${isPlaying ? "playing" : "paused"}`}
+          role="status"
+          aria-live="polite"
+        >
+          <div className="pie-status-left">
+            <span className="pie-status-indicator">
+              <i className="pie-status-dot" />
+              <strong>{isPlaying ? "PLAYING" : "PAUSED"}</strong>
+            </span>
+            <span
+              className="pie-meta-pill"
+              title="Simulated fixed physics steps and elapsed gameplay time"
+            >
+              Step {pieState.fixed_steps} · {pieState.elapsed_secs.toFixed(2)}s
+            </span>
+            <span
+              className="pie-meta-pill"
+              title={
+                pieState.using_scene_camera
+                  ? "Viewport driven by active SceneCamera"
+                  : "No active SceneCamera in scene; using Editor Camera fallback"
+              }
+            >
+              <Camera size={11} />
+              {pieState.using_scene_camera ? "Game Camera" : "Editor Camera"}
+            </span>
+          </div>
+          <span
+            className="pie-status-note truncate"
+            title="Live scene changes during Play-In-Editor are temporary and automatically revert when you press Stop."
+          >
+            Temporary PIE session — edits revert on Stop
+          </span>
+        </div>
+      )}
 
       <div
         ref={containerRef}
@@ -679,7 +757,9 @@ export function ViewportPanel({
 
             {assetDropActive && (
               <div className="viewport-drop-overlay">
-                Drop asset to spawn in scene
+                {pieActive
+                  ? "Drop asset to spawn temporarily in PIE"
+                  : "Drop asset to spawn in scene"}
               </div>
             )}
 
@@ -692,9 +772,13 @@ export function ViewportPanel({
             )}
 
             <div className="viewport-overlay-legend">
-              {cameraMode === "3d"
-                ? "3D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
-                : "2D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB/MMB Pan · Wheel Zoom"}
+              {isPlaying
+                ? "PIE Playing: Click viewport for game input · F6 Pause · F10 Step · Shift+F5 Stop"
+                : isPaused
+                  ? "PIE Paused: Inspect live entities · F5 Resume · F10 Step · Shift+F5 Stop"
+                  : cameraMode === "3d"
+                    ? "3D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
+                    : "2D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB/MMB Pan · Wheel Zoom"}
             </div>
           </>
         ) : (

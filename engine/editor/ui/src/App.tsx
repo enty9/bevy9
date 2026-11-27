@@ -39,6 +39,7 @@ import type {
   FrameMetrics,
   GizmoStatePayload,
   HistoryStatePayload,
+  PieStatePayload,
   PrefabFileEntry,
   SceneTreeNode,
   ViewportCameraMode,
@@ -97,6 +98,14 @@ const DEFAULT_HISTORY_STATE: HistoryStatePayload = {
   redo_label: null,
   undo_len: 0,
   redo_len: 0,
+};
+
+const DEFAULT_PIE_STATE: PieStatePayload = {
+  state: "editing",
+  fixed_steps: 0,
+  frame_count: 0,
+  elapsed_secs: 0,
+  using_scene_camera: false,
 };
 
 function findNodeByGuid(
@@ -158,6 +167,9 @@ export function App() {
   const [historyState, setHistoryState] = useState<HistoryStatePayload>(
     DEFAULT_HISTORY_STATE,
   );
+  const [pieState, setPieState] = useState<PieStatePayload>(DEFAULT_PIE_STATE);
+  const [pieBusy, setPieBusy] = useState(false);
+  const [viewportFocusToken, setViewportFocusToken] = useState(0);
   const [inspectorRevision, setInspectorRevision] = useState(0);
   const [metrics, setMetrics] = useState<FrameMetrics>(DEFAULT_METRICS);
   const [sceneName, setSceneName] = useState("Untitled Scene");
@@ -172,6 +184,18 @@ export function App() {
   const models = useModelTabs(hostStatus.project_dir, setBannerError);
 
   useEffect(() => subscribeNativeDialogOpen(setNativeDialogOpen), []);
+
+  const pieActive = pieState.state !== "editing";
+  const pieActiveRef = useRef(pieActive);
+  pieActiveRef.current = pieActive;
+  const pieBusyRef = useRef(false);
+  const suppressDirtyUntilRef = useRef(0);
+
+  const markSceneDirtyIfEditing = useCallback(() => {
+    if (!pieActiveRef.current && performance.now() >= suppressDirtyUntilRef.current) {
+      setSceneDirty(true);
+    }
+  }, []);
 
   const frameListenersRef = useRef(new Set<FrameSubscriber>());
   const autoStartedRef = useRef(false);
@@ -313,13 +337,25 @@ export function App() {
   );
 
   useEffect(() => {
+    if (hostStatus.state === "stopped" || hostStatus.state === "crashed") {
+      setPieState(DEFAULT_PIE_STATE);
+    }
+  }, [hostStatus.state]);
+
+  useEffect(() => {
     if (!ipcClient) {
       setIpcState("disconnected");
+      setPieState(DEFAULT_PIE_STATE);
       return;
     }
 
     const unsubs = [
-      ipcClient.onConnectionState(setIpcState),
+      ipcClient.onConnectionState((nextState) => {
+        setIpcState(nextState);
+        if (nextState === "disconnected") {
+          setPieState(DEFAULT_PIE_STATE);
+        }
+      }),
       ipcClient.onWelcome((welcome) => {
         setSceneName(welcome.scene_name);
         setScenePath(welcome.scene_path);
@@ -335,8 +371,17 @@ export function App() {
       ipcClient.onViewportState(setViewportState),
       ipcClient.onGizmoState(setGizmoState),
       ipcClient.onHistoryState(setHistoryState),
+      ipcClient.onPieState((next) => {
+        const wasActive = pieActiveRef.current;
+        const nextActive = next.state !== "editing";
+        if (wasActive && !nextActive) {
+          suppressDirtyUntilRef.current = performance.now() + 500;
+        }
+        pieActiveRef.current = nextActive;
+        setPieState(next);
+      }),
       ipcClient.onInspectorRefresh(() => {
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         setInspectorRevision((rev) => rev + 1);
       }),
       ipcClient.onMetrics(setMetrics),
@@ -372,7 +417,7 @@ export function App() {
       }
       ipcClient.disconnect();
     };
-  }, [ipcClient, appendLog]);
+  }, [ipcClient, appendLog, markSceneDirtyIfEditing]);
 
   useEffect(() => {
     if (!brpClient || ipcState !== "connected") {
@@ -385,7 +430,7 @@ export function App() {
         return;
       }
       try {
-        const [schema, tree, prefabList, assetsSnap, debugState] =
+        const [schema, tree, prefabList, assetsSnap, debugState, currentPie] =
           await Promise.all([
             brpClient.getRegistrySchema(),
             brpClient.getWorldTree(),
@@ -394,6 +439,7 @@ export function App() {
             brpClient
               .call<{ enabled: boolean }>("engine.physics.debug")
               .catch(() => ({ enabled: false })),
+            brpClient.getPieState().catch(() => DEFAULT_PIE_STATE),
           ]);
         if (cancelled) {
           return;
@@ -403,6 +449,7 @@ export function App() {
         setPrefabs(prefabList.prefabs);
         setAssetSnapshot(assetsSnap);
         setPhysicsDebug(debugState.enabled);
+        setPieState(currentPie);
         setSceneName(tree.scene_name);
         setScenePath(tree.scene_path);
       } catch (err) {
@@ -423,6 +470,37 @@ export function App() {
       cancelled = true;
     };
   }, [brpClient, ipcState, appendLog]);
+
+  // Poll PIE telemetry lightly while Playing so elapsed time and fixed step counts stay live.
+  useEffect(() => {
+    if (!brpClient || ipcState !== "connected" || pieState.state !== "playing") {
+      return;
+    }
+    let live = true;
+    let inFlight = false;
+    const interval = window.setInterval(() => {
+      if (!live || inFlight) {
+        return;
+      }
+      inFlight = true;
+      void brpClient
+        .getPieState()
+        .then((next) => {
+          if (live && !pieBusyRef.current) {
+            pieActiveRef.current = next.state !== "editing";
+            setPieState(next);
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    }, 250);
+    return () => {
+      live = false;
+      window.clearInterval(interval);
+    };
+  }, [brpClient, ipcState, pieState.state]);
 
   const refreshAssets = useCallback(async () => {
     if (!brpClient) {
@@ -547,7 +625,7 @@ export function App() {
           vx ?? viewportState.width * 0.5,
           vy ?? viewportState.height * 0.5,
         );
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
         setSelection([res.guid]);
@@ -555,13 +633,115 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, viewportState.width, viewportState.height, models.setActive],
+    [
+      brpClient,
+      viewportState.width,
+      viewportState.height,
+      models.setActive,
+      markSceneDirtyIfEditing,
+    ],
   );
 
   const consoleAlertCount = useMemo(
     () => logs.filter((l) => l.level === "error" || l.level === "warn").length,
     [logs],
   );
+
+  const handlePiePlay = useCallback(async () => {
+    if (!brpClient || pieBusyRef.current) {
+      return;
+    }
+    pieBusyRef.current = true;
+    setPieBusy(true);
+    setBannerError(null);
+    models.setActive(null);
+    try {
+      const next = await brpClient.piePlay();
+      setPieState(next);
+      setViewportFocusToken((n) => n + 1);
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      pieBusyRef.current = false;
+      setPieBusy(false);
+    }
+  }, [brpClient, models.setActive]);
+
+  const handlePiePause = useCallback(async () => {
+    if (!brpClient || pieBusyRef.current) {
+      return;
+    }
+    pieBusyRef.current = true;
+    setPieBusy(true);
+    setBannerError(null);
+    try {
+      const next = await brpClient.piePause();
+      setPieState(next);
+      setInspectorRevision((rev) => rev + 1);
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      pieBusyRef.current = false;
+      setPieBusy(false);
+    }
+  }, [brpClient]);
+
+  const handlePieStep = useCallback(async () => {
+    if (!brpClient || pieBusyRef.current) {
+      return;
+    }
+    pieBusyRef.current = true;
+    setPieBusy(true);
+    setBannerError(null);
+    models.setActive(null);
+    try {
+      const next = await brpClient.pieStep({ steps: 1 });
+      setPieState(next);
+      setViewportFocusToken((n) => n + 1);
+      const tree = await brpClient.getWorldTree().catch(() => null);
+      if (tree) {
+        setHierarchy(tree.roots);
+      }
+      setInspectorRevision((rev) => rev + 1);
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      pieBusyRef.current = false;
+      setPieBusy(false);
+    }
+  }, [brpClient, models.setActive]);
+
+  const handlePieStop = useCallback(async () => {
+    if (!brpClient || pieBusyRef.current) {
+      return;
+    }
+    pieBusyRef.current = true;
+    setPieBusy(true);
+    setBannerError(null);
+    suppressDirtyUntilRef.current = performance.now() + 1000;
+    try {
+      const next = await brpClient.pieStop();
+      suppressDirtyUntilRef.current = performance.now() + 500;
+      pieActiveRef.current = next.state !== "editing";
+      setPieState(next);
+      const [tree, history] = await Promise.all([
+        brpClient.getWorldTree().catch(() => null),
+        brpClient.getHistoryState().catch(() => null),
+      ]);
+      if (tree) {
+        setHierarchy(tree.roots);
+      }
+      if (history) {
+        setHistoryState(history);
+      }
+      setInspectorRevision((rev) => rev + 1);
+    } catch (err) {
+      setBannerError(err instanceof Error ? err.message : String(err));
+    } finally {
+      pieBusyRef.current = false;
+      setPieBusy(false);
+    }
+  }, [brpClient]);
 
   const handleStartForProject = useCallback(async (projectDir: string) => {
     if (models.tabs.length && projectDir !== hostStatus.project_dir) {
@@ -570,6 +750,10 @@ export function App() {
     }
     setBusy(true);
     setBannerError(null);
+    if (brpClient && pieActiveRef.current) {
+      await brpClient.pieStop().catch(() => {});
+    }
+    setPieState(DEFAULT_PIE_STATE);
     setSelection([]);
     setHierarchy([]);
     setAssetSnapshot(null);
@@ -586,7 +770,7 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, [models.tabs.length, hostStatus.project_dir]);
+  }, [models.tabs.length, hostStatus.project_dir, brpClient]);
 
   const handleBrowseProject = useCallback(async () => {
     const folder = await pickProjectFolder();
@@ -599,6 +783,10 @@ export function App() {
   const handleNewScene = useCallback(
     async (name: string, worldMode: WorldMode) => {
       if (!brpClient) {
+        return;
+      }
+      if (pieActiveRef.current) {
+        setBannerError("Stop Play-In-Editor before creating a new scene.");
         return;
       }
       models.setActive(null);
@@ -623,6 +811,10 @@ export function App() {
   const handleOpenScene = useCallback(
     async (explicitPath?: string) => {
       if (!brpClient) {
+        return;
+      }
+      if (pieActiveRef.current) {
+        setBannerError("Stop Play-In-Editor before opening another scene.");
         return;
       }
       const picked =
@@ -650,7 +842,7 @@ export function App() {
   );
 
   const handleSaveSceneAs = useCallback(async () => {
-    if (!brpClient) {
+    if (!brpClient || pieActiveRef.current) {
       return;
     }
     const defaultTarget =
@@ -675,7 +867,7 @@ export function App() {
   }, [brpClient, scenePath, sceneName, activeProject]);
 
   const handleSaveScene = useCallback(async () => {
-    if (!brpClient) {
+    if (!brpClient || pieActiveRef.current) {
       return;
     }
     if (!scenePath) {
@@ -698,6 +890,9 @@ export function App() {
 
   const handleSetCameraMode = useCallback(
     (mode: ViewportCameraMode) => {
+      if (pieActiveRef.current) {
+        return;
+      }
       ipcClient?.setCameraMode(mode);
       setViewportState((prev) => ({ ...prev, camera_mode: mode }));
     },
@@ -748,14 +943,14 @@ export function App() {
           undefined,
           node.visible ? "Hide Entity" : "Show Entity",
         );
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleSpawnPreset = useCallback(
@@ -771,14 +966,14 @@ export function App() {
         });
         setSelection([res.guid]);
         ipcClient?.selectEntities([res.guid]);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, ipcClient],
+    [brpClient, ipcClient, markSceneDirtyIfEditing],
   );
 
   const handleRenameEntity = useCallback(
@@ -795,14 +990,14 @@ export function App() {
           undefined,
           "Rename Entity",
         );
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleDeleteEntity = useCallback(
@@ -817,14 +1012,14 @@ export function App() {
         const nextSelection = selection.filter((g) => !deletedSet.has(g));
         setSelection(nextSelection);
         ipcClient?.selectEntities(nextSelection);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, ipcClient, selection],
+    [brpClient, ipcClient, selection, markSceneDirtyIfEditing],
   );
 
   const handleReparentEntity = useCallback(
@@ -835,18 +1030,18 @@ export function App() {
       setBannerError(null);
       try {
         await brpClient.reparentEntity(guid, parentGuid);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleUndo = useCallback(async () => {
-    if (!brpClient) {
+    if (!brpClient || pieActiveRef.current) {
       return;
     }
     setBannerError(null);
@@ -854,7 +1049,7 @@ export function App() {
       const res = await brpClient.undo();
       setHistoryState(res.state);
       if (res.applied) {
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
         setInspectorRevision((rev) => rev + 1);
@@ -862,10 +1057,10 @@ export function App() {
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : String(err));
     }
-  }, [brpClient]);
+  }, [brpClient, markSceneDirtyIfEditing]);
 
   const handleRedo = useCallback(async () => {
-    if (!brpClient) {
+    if (!brpClient || pieActiveRef.current) {
       return;
     }
     setBannerError(null);
@@ -873,7 +1068,7 @@ export function App() {
       const res = await brpClient.redo();
       setHistoryState(res.state);
       if (res.applied) {
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
         setInspectorRevision((rev) => rev + 1);
@@ -881,11 +1076,11 @@ export function App() {
     } catch (err) {
       setBannerError(err instanceof Error ? err.message : String(err));
     }
-  }, [brpClient]);
+  }, [brpClient, markSceneDirtyIfEditing]);
 
   const handleSaveAsPrefab = useCallback(
     async (node: SceneTreeNode) => {
-      if (!brpClient) {
+      if (!brpClient || pieActiveRef.current) {
         return;
       }
       const slug = node.name
@@ -910,7 +1105,7 @@ export function App() {
           path: targetPath,
           name: node.name,
         });
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const [tree, prefabList] = await Promise.all([
           brpClient.getWorldTree(),
           brpClient.listPrefabs(),
@@ -922,7 +1117,7 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, activeProject],
+    [brpClient, activeProject, markSceneDirtyIfEditing],
   );
 
   const handleSpawnPrefab = useCallback(
@@ -938,14 +1133,14 @@ export function App() {
         });
         setSelection([res.guid]);
         ipcClient?.selectEntities([res.guid]);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
       } catch (err) {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, ipcClient],
+    [brpClient, ipcClient, markSceneDirtyIfEditing],
   );
 
   const handleBrowseSpawnPrefab = useCallback(
@@ -966,13 +1161,13 @@ export function App() {
 
   const handleApplyPrefab = useCallback(
     async (node: SceneTreeNode) => {
-      if (!brpClient) {
+      if (!brpClient || pieActiveRef.current) {
         return;
       }
       setBannerError(null);
       try {
         await brpClient.applyPrefab(node.guid);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const [tree, prefabList] = await Promise.all([
           brpClient.getWorldTree(),
           brpClient.listPrefabs(),
@@ -984,7 +1179,7 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleRevertPrefab = useCallback(
@@ -995,7 +1190,7 @@ export function App() {
       setBannerError(null);
       try {
         await brpClient.revertPrefab(node.guid, null);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
         setInspectorRevision((rev) => rev + 1);
@@ -1003,7 +1198,7 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleRevertPrefabComponent = useCallback(
@@ -1014,7 +1209,7 @@ export function App() {
       setBannerError(null);
       try {
         await brpClient.revertPrefab(node.guid, typePath);
-        setSceneDirty(true);
+        markSceneDirtyIfEditing();
         const tree = await brpClient.getWorldTree();
         setHierarchy(tree.roots);
         setInspectorRevision((rev) => rev + 1);
@@ -1022,12 +1217,16 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const handleRestartHost = useCallback(async () => {
     setBusy(true);
     setBannerError(null);
+    if (brpClient && pieActiveRef.current) {
+      await brpClient.pieStop().catch(() => {});
+    }
+    setPieState(DEFAULT_PIE_STATE);
     try {
       const next = await restartEngineHost();
       setHostStatus(next);
@@ -1036,7 +1235,7 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [brpClient]);
 
   useEffect(() => {
     function onWindowKeyDown(event: KeyboardEvent) {
@@ -1049,6 +1248,44 @@ export function App() {
         tag === "SELECT" ||
         target?.isContentEditable === true;
 
+      // PIE transport hotkeys (F5 Play/Resume, Shift+F5 Stop, F6 Pause, F10 Step).
+      if (
+        !isTextInput &&
+        !busy &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        brpClient &&
+        (hostStatus.state === "running" || ipcState === "connected")
+      ) {
+        if (event.code === "F5") {
+          event.preventDefault();
+          if (event.repeat) return;
+          if (event.shiftKey) {
+            if (pieState.state !== "editing") {
+              void handlePieStop();
+            }
+          } else if (pieState.state !== "playing") {
+            void handlePiePlay();
+          }
+          return;
+        }
+        if (event.code === "F6" && !event.shiftKey) {
+          event.preventDefault();
+          if (!event.repeat && pieState.state === "playing") {
+            void handlePiePause();
+          }
+          return;
+        }
+        if (event.code === "F10" && !event.shiftKey) {
+          event.preventDefault();
+          if (!event.repeat) {
+            void handlePieStep();
+          }
+          return;
+        }
+      }
+
       if (
         (event.ctrlKey || event.metaKey) &&
         !event.altKey &&
@@ -1056,7 +1293,7 @@ export function App() {
         event.code === "KeyS"
       ) {
         event.preventDefault();
-        if (!event.repeat) {
+        if (!event.repeat && !pieActive) {
           void handleSaveScene();
         }
         return;
@@ -1065,6 +1302,9 @@ export function App() {
       if ((event.ctrlKey || event.metaKey) && !event.altKey && !isTextInput) {
         if (event.code === "KeyZ") {
           event.preventDefault();
+          if (pieActive) {
+            return;
+          }
           if (event.shiftKey) {
             void handleRedo();
           } else {
@@ -1074,12 +1314,21 @@ export function App() {
         }
         if (event.code === "KeyY") {
           event.preventDefault();
+          if (pieActive) {
+            return;
+          }
           void handleRedo();
           return;
         }
       }
 
+      if (pieActive && !isTextInput && event.key === "Delete") {
+        event.preventDefault();
+        return;
+      }
+
       if (
+        pieActive ||
         isTextInput ||
         tag === "CANVAS" ||
         event.ctrlKey ||
@@ -1108,6 +1357,16 @@ export function App() {
     };
   }, [
     models.active,
+    busy,
+    brpClient,
+    hostStatus.state,
+    ipcState,
+    pieState.state,
+    pieActive,
+    handlePiePlay,
+    handlePiePause,
+    handlePieStep,
+    handlePieStop,
     handleSaveScene,
     handleUndo,
     handleRedo,
@@ -1159,7 +1418,7 @@ export function App() {
 
   const handleComponentChanged = useCallback(
     async (refreshTree: boolean) => {
-      setSceneDirty(true);
+      markSceneDirtyIfEditing();
       if (refreshTree && brpClient) {
         try {
           const tree = await brpClient.getWorldTree();
@@ -1169,7 +1428,7 @@ export function App() {
         }
       }
     },
-    [brpClient],
+    [brpClient, markSceneDirtyIfEditing],
   );
 
   const openModelIds = useMemo(
@@ -1191,6 +1450,8 @@ export function App() {
         sceneDirty={sceneDirty}
         cameraMode={viewportState.camera_mode}
         historyState={historyState}
+        pieState={pieState}
+        pieBusy={pieBusy}
         metrics={metrics}
         busy={busy}
         onSelectProject={(dir) => void handleStartForProject(dir)}
@@ -1201,6 +1462,10 @@ export function App() {
         onSaveSceneAs={() => void handleSaveSceneAs()}
         onUndo={() => void handleUndo()}
         onRedo={() => void handleRedo()}
+        onPiePlay={() => void handlePiePlay()}
+        onPiePause={() => void handlePiePause()}
+        onPieStep={() => void handlePieStep()}
+        onPieStop={() => void handlePieStop()}
         onSetCameraMode={handleSetCameraMode}
         onTogglePhysicsDebug={handleTogglePhysicsDebug}
         onStartHost={() =>
@@ -1232,6 +1497,7 @@ export function App() {
             selectedGuids={selection}
             prefabs={prefabs}
             connected={ipcState === "connected" || brpClient !== null}
+            pieActive={pieActive}
             onSelect={handleSelectEntities}
             onToggleVisibility={(node) => void handleToggleVisibility(node)}
             onSpawnPreset={(preset, parentGuid) =>
@@ -1268,6 +1534,8 @@ export function App() {
               height={viewportState.height}
               ipcState={ipcState}
               gizmoState={gizmoState}
+              pieState={pieState}
+              focusRequestToken={viewportFocusToken}
               physicsDebug={physicsDebug}
               assets={assetSnapshot?.assets ?? []}
               subscribeFrames={subscribeFrames}
@@ -1325,6 +1593,7 @@ export function App() {
             assets={assetSnapshot?.assets ?? []}
             sceneEntities={sceneEntities}
             inspectorRevision={inspectorRevision}
+            pieState={pieState.state}
             onComponentChanged={(refreshTree) =>
               void handleComponentChanged(refreshTree)
             }
