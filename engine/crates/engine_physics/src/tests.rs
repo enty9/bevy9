@@ -377,3 +377,151 @@ fn editor_debug_sync_updates_collider_on_same_post_update_and_clears_when_disabl
         None
     );
 }
+
+#[test]
+fn editor_debug_sync_builds_ball_shape_and_switches_variants() {
+    use rapier3d::prelude::TypedShape;
+
+    let mut app = harness();
+    app.insert_resource(PhysicsOptions {
+        simulate: false,
+        debug: true,
+    });
+    let e = app
+        .world_mut()
+        .spawn((
+            Transform::from_xyz(1.1, 2.6, 0.2),
+            Collider3D::Ball(0.65),
+            RigidBody3D::default(),
+        ))
+        .id();
+    app.world_mut().run_schedule(PostUpdate);
+
+    let ball_radius = |app: &App| match app
+        .world()
+        .resource::<PhysicsWorld3D>()
+        .collider_for(e)
+        .expect("collider must exist")
+        .shape()
+        .as_typed_shape()
+    {
+        TypedShape::Ball(ball) => Some(ball.radius),
+        _ => None,
+    };
+    let radius =
+        ball_radius(&app).expect("Collider3D::Ball must build a Rapier ball, not a cuboid");
+    assert!((radius - 0.65).abs() < 1e-5);
+
+    *app.world_mut().get_mut::<Collider3D>(e).unwrap() = Collider3D::Cuboid(Vec3::splat(0.6));
+    app.world_mut().run_schedule(PostUpdate);
+    assert!(matches!(
+        app.world()
+            .resource::<PhysicsWorld3D>()
+            .collider_for(e)
+            .unwrap()
+            .shape()
+            .as_typed_shape(),
+        TypedShape::Cuboid(_)
+    ));
+
+    *app.world_mut().get_mut::<Collider3D>(e).unwrap() = Collider3D::Ball(0.4);
+    app.world_mut().run_schedule(PostUpdate);
+    let radius = ball_radius(&app).expect("switching back to Ball must rebuild a ball");
+    assert!((radius - 0.4).abs() < 1e-5);
+}
+
+#[test]
+fn selected_colliders_are_queryable_and_follow_edits_without_simulation() {
+    let mut app = harness();
+    let world = app.world_mut();
+    world.insert_resource(PhysicsOptions {
+        simulate: false,
+        debug: false,
+    });
+    let entity = world
+        .spawn((
+            Transform::from_xyz(0., 2., 0.),
+            Collider2D::Ball(1.),
+            Collider3D::Ball(1.),
+        ))
+        .id();
+    world
+        .resource_mut::<PhysicsDebugSelection>()
+        .0
+        .insert(entity);
+    let check = |app: &mut App, expected: f32| {
+        app.world_mut().run_schedule(PostUpdate);
+        let physics_2d = app.world().resource::<PhysicsWorld2D>();
+        assert!(physics_2d.collider_for(entity).is_some());
+        let hit = physics_2d
+            .raycast(Vec2::ZERO, Vec2::Y, 10., CastFilter::default())
+            .unwrap();
+        assert_eq!(hit.entity, entity);
+        assert!((hit.distance - expected).abs() < 1e-5);
+        let hit = app
+            .world()
+            .resource::<PhysicsWorld3D>()
+            .raycast(Vec3::ZERO, Vec3::Y, 10., CastFilter::default())
+            .unwrap();
+        assert_eq!(hit.entity, entity);
+        assert!((hit.distance - expected).abs() < 1e-5);
+    };
+    check(&mut app, 1.);
+    app.world_mut()
+        .get_mut::<Transform>(entity)
+        .unwrap()
+        .translation
+        .y = 4.;
+    *app.world_mut().get_mut::<Collider2D>(entity).unwrap() = Collider2D::Ball(0.5);
+    *app.world_mut().get_mut::<Collider3D>(entity).unwrap() = Collider3D::Ball(0.5);
+    check(&mut app, 3.5);
+    app.world_mut().despawn(entity);
+    app.world_mut().run_schedule(PostUpdate);
+    assert!(app
+        .world()
+        .resource::<PhysicsWorld2D>()
+        .raycast(Vec2::ZERO, Vec2::Y, 10., CastFilter::default())
+        .is_none());
+    assert!(app
+        .world()
+        .resource::<PhysicsWorld3D>()
+        .raycast(Vec3::ZERO, Vec3::Y, 10., CastFilter::default())
+        .is_none());
+}
+
+#[test]
+fn interpolation_uses_the_current_frame_parent_transform() {
+    use bevy_transform::components::GlobalTransform;
+
+    let mut app = harness();
+    let world = app.world_mut();
+    let parent = world.spawn(Transform::IDENTITY).id();
+    let child = world
+        .spawn((
+            ChildOf(parent),
+            Transform::from_xyz(3., 0., 0.),
+            Collider3D::Ball(0.5),
+            RigidBody3D {
+                gravity_scale: 0.,
+                ..Default::default()
+            },
+        ))
+        .id();
+    step(&mut app, 1);
+    // Authored parent moves in Update after the fixed simulation step. The
+    // child's world-space simulation pose should not inherit that displacement.
+    app.world_mut()
+        .get_mut::<Transform>(parent)
+        .unwrap()
+        .translation
+        .x = 5.;
+    app.world_mut().run_schedule(PostUpdate);
+    let child_global = app.world().get::<GlobalTransform>(child).unwrap();
+    assert!(child_global
+        .translation()
+        .abs_diff_eq(Vec3::new(3., 0., 0.), 1e-5));
+    assert_eq!(
+        app.world().get::<Transform>(child).unwrap().translation.x,
+        -2.
+    );
+}

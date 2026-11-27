@@ -5,100 +5,31 @@
     world: (
         resources: {},
         entities: {
-            4294967253: (
+            4294966842: (
                 components: {
-                    "bevy_ecs::name::Name": "Trigger zone",
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::name::Name": "Floor",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (1.1, 1.25, 0.2),
+                        translation: (0.0, -0.1, 0.0),
                         rotation: (0.0, 0.0, 0.0, 1.0),
                         scale: (1.0, 1.0, 1.0),
                     ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000008"),
-                    "engine_scene::components::SceneEntity": (),
-                    "engine_physics::Collider3D": Cuboid((0.9, 0.15, 0.9)),
-                    "engine_physics::TriggerVolume3D": (),
-                },
-            ),
-            4294967254: (
-                components: {
-                    "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::name::Name": "MainCamera3D",
-                    "bevy_transform::components::transform::Transform": (
-                        translation: (3.8, 2.8, 5.6),
-                        rotation: (-0.15588109, 0.28977257, 0.047895275, 0.9431007),
-                        scale: (1.0, 1.0, 1.0),
-                    ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000007"),
-                    "engine_audio::AudioListener": (enabled: true, priority: 0),
-                    "engine_scene::components::SceneCamera3d": (
-                        fov_degrees: 45.0,
-                        active: true,
-                    ),
-                    "engine_scene::components::SceneEntity": (),
-                },
-            ),
-            4294967255: (
-                components: {
-                    "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::hierarchy::ChildOf": (4294967257),
-                    "bevy_ecs::name::Name": "AccentSphere",
-                    "bevy_transform::components::transform::Transform": (
-                        translation: (1.1, 2.6, 0.2),
-                        rotation: (0.0, 0.0, 0.0, 1.0),
-                        scale: (1.0, 1.0, 1.0),
-                    ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000006"),
-                    "engine_scene::components::MeshPrimitive3d": Sphere(
-                        radius: 0.65,
-                    ),
-                    "engine_physics::RigidBody3D": (kind: Dynamic, velocity: (0.0, 0.0, 0.0), gravity_scale: 1.0, ccd: true),
-                    "engine_physics::Collider3D": Ball(0.65),
-                    "engine_physics::PhysicsMaterial": (friction: 0.45, restitution: 0.8, density: 1.0),
-                    "engine_scene::components::SceneEntity": (),
-                    "engine_scene::components::StandardMaterialDesc": (
-                        base_color: Srgba((
-                            red: 0.95,
-                            green: 0.52,
-                            blue: 0.24,
-                            alpha: 1.0,
-                        )),
-                        metallic: 0.1,
-                        perceptual_roughness: 0.25,
-                        emissive: (
-                            red: 0.0,
-                            green: 0.0,
-                            blue: 0.0,
-                            alpha: 1.0,
-                        ),
-                    ),
-                },
-            ),
-            4294967256: (
-                components: {
-                    "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::hierarchy::ChildOf": (4294967257),
-                    "bevy_ecs::name::Name": "HeroCube",
-                    "bevy_transform::components::transform::Transform": (
-                        translation: (-0.9, 1.5, 0.0),
-                        rotation: (0.0, 0.0, 0.0, 1.0),
-                        scale: (1.0, 1.0, 1.0),
-                    ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000005"),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000001"),
+                    "engine_physics::Collider3D": Cuboid((6.0, 0.1, 6.0)),
                     "engine_scene::components::MeshPrimitive3d": Cube(
-                        size: (1.2, 1.2, 1.2),
+                        size: (12.0, 0.2, 12.0),
                     ),
-                    "engine_physics::RigidBody3D": (kind: Dynamic, velocity: (0.0, 0.0, 0.0), gravity_scale: 1.0, ccd: true),
-                    "engine_physics::Collider3D": Cuboid((0.6, 0.6, 0.6)),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((
-                            red: 0.24,
-                            green: 0.62,
-                            blue: 0.96,
+                            red: 0.18,
+                            green: 0.2,
+                            blue: 0.26,
                             alpha: 1.0,
                         )),
-                        metallic: 0.15,
-                        perceptual_roughness: 0.35,
+                        base_color_texture: None,
+                        metallic: 0.0,
+                        perceptual_roughness: 0.85,
                         emissive: (
                             red: 0.0,
                             green: 0.0,
@@ -108,20 +39,30 @@
                     ),
                 },
             ),
-            4294967257: (
+            4294966843: (
                 components: {
                     "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::name::Name": "ShowcaseGroup",
+                    "bevy_ecs::name::Name": "Sun",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (0.0, 0.0, 0.0),
-                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        translation: (4.0, 8.0, 5.0),
+                        rotation: (-0.4086679, 0.2983547, 0.14335296, 0.8505439),
                         scale: (1.0, 1.0, 1.0),
                     ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000004"),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000002"),
+                    "engine_scene::components::SceneDirectionalLight": (
+                        color: LinearRgba((
+                            red: 1.0,
+                            green: 1.0,
+                            blue: 1.0,
+                            alpha: 1.0,
+                        )),
+                        illuminance: 12000.0,
+                        shadows_enabled: true,
+                    ),
                     "engine_scene::components::SceneEntity": (),
                 },
             ),
-            4294967258: (
+            4294966844: (
                 components: {
                     "bevy_camera::visibility::Visibility": Inherited,
                     "bevy_ecs::name::Name": "AccentLight",
@@ -145,53 +86,51 @@
                     ),
                 },
             ),
-            4294967259: (
+            4294966845: (
                 components: {
                     "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::name::Name": "Sun",
+                    "bevy_ecs::name::Name": "ShowcaseGroup",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (4.0, 8.0, 5.0),
-                        rotation: (-0.4086679, 0.2983547, 0.14335296, 0.8505439),
-                        scale: (1.0, 1.0, 1.0),
-                    ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000002"),
-                    "engine_scene::components::SceneDirectionalLight": (
-                        color: LinearRgba((
-                            red: 1.0,
-                            green: 1.0,
-                            blue: 1.0,
-                            alpha: 1.0,
-                        )),
-                        illuminance: 12000.0,
-                        shadows_enabled: true,
-                    ),
-                    "engine_scene::components::SceneEntity": (),
-                },
-            ),
-            4294967260: (
-                components: {
-                    "bevy_camera::visibility::Visibility": Inherited,
-                    "bevy_ecs::name::Name": "Floor",
-                    "bevy_transform::components::transform::Transform": (
-                        translation: (0.0, -0.1, 0.0),
+                        translation: (0.0, 0.0, 0.0),
                         rotation: (0.0, 0.0, 0.0, 1.0),
                         scale: (1.0, 1.0, 1.0),
                     ),
-                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000001"),
-                    "engine_scene::components::MeshPrimitive3d": Cube(
-                        size: (12.0, 0.2, 12.0),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000004"),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+            4294966846: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::hierarchy::ChildOf": (4294966845),
+                    "bevy_ecs::name::Name": "HeroCube",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (-0.9, 1.5, 0.0),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
                     ),
-                    "engine_physics::Collider3D": Cuboid((6.0, 0.1, 6.0)),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000005"),
+                    "engine_physics::Collider3D": Cuboid((0.6, 0.6, 0.6)),
+                    "engine_physics::RigidBody3D": (
+                        kind: Dynamic,
+                        velocity: (0.0, 0.0, 0.0),
+                        gravity_scale: 1.0,
+                        ccd: true,
+                    ),
+                    "engine_scene::components::MeshPrimitive3d": Cube(
+                        size: (1.2, 1.2, 1.2),
+                    ),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((
-                            red: 0.18,
-                            green: 0.2,
-                            blue: 0.26,
+                            red: 0.24,
+                            green: 0.62,
+                            blue: 0.96,
                             alpha: 1.0,
                         )),
-                        metallic: 0.0,
-                        perceptual_roughness: 0.85,
+                        base_color_texture: None,
+                        metallic: 0.15,
+                        perceptual_roughness: 0.35,
                         emissive: (
                             red: 0.0,
                             green: 0.0,
@@ -199,6 +138,87 @@
                             alpha: 1.0,
                         ),
                     ),
+                },
+            ),
+            4294966847: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::hierarchy::ChildOf": (4294966845),
+                    "bevy_ecs::name::Name": "AccentSphere",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (1.1, 2.6, 0.2),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000006"),
+                    "engine_physics::Collider3D": Ball(0.65),
+                    "engine_physics::PhysicsMaterial": (
+                        friction: 0.45,
+                        restitution: 0.8,
+                        density: 1.0,
+                    ),
+                    "engine_physics::RigidBody3D": (
+                        kind: Dynamic,
+                        velocity: (0.0, 0.0, 0.0),
+                        gravity_scale: 1.0,
+                        ccd: true,
+                    ),
+                    "engine_scene::components::MeshPrimitive3d": Sphere(
+                        radius: 0.65,
+                    ),
+                    "engine_scene::components::SceneEntity": (),
+                    "engine_scene::components::StandardMaterialDesc": (
+                        base_color: Srgba((
+                            red: 0.95,
+                            green: 0.52,
+                            blue: 0.24,
+                            alpha: 1.0,
+                        )),
+                        base_color_texture: None,
+                        metallic: 0.1,
+                        perceptual_roughness: 0.25,
+                        emissive: (
+                            red: 0.0,
+                            green: 0.0,
+                            blue: 0.0,
+                            alpha: 1.0,
+                        ),
+                    ),
+                },
+            ),
+            4294966848: (
+                components: {
+                    "bevy_camera::visibility::Visibility": Inherited,
+                    "bevy_ecs::name::Name": "MainCamera3D",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (3.8, 2.8, 5.6),
+                        rotation: (-0.15588109, 0.28977257, 0.047895275, 0.9431007),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_audio::AudioListener": (
+                        enabled: true,
+                        priority: 0,
+                    ),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000007"),
+                    "engine_scene::components::SceneCamera3d": (
+                        fov_degrees: 45.0,
+                        active: true,
+                    ),
+                    "engine_scene::components::SceneEntity": (),
+                },
+            ),
+            4294966849: (
+                components: {
+                    "bevy_ecs::name::Name": "Trigger zone",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (1.1, 1.25, 0.2),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000008"),
+                    "engine_physics::Collider3D": Cuboid((0.9, 0.15, 0.9)),
+                    "engine_physics::TriggerVolume3D": (),
+                    "engine_scene::components::SceneEntity": (),
                 },
             ),
         },

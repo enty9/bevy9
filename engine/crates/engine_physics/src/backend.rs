@@ -21,6 +21,7 @@ macro_rules! backend {
 
         struct ColliderConfig<D> {
             descriptor: D,
+            revision: bevy_ecs::change_detection::Tick,
             material: PhysicsMaterial,
             layers: CollisionLayers,
             sensor: bool,
@@ -35,11 +36,12 @@ macro_rules! backend {
             config: Option<ColliderConfig<$collider>>,
             last_local: Transform,
             last_target: Isometry<f32>,
+            last_parent: Option<GlobalTransform>,
             previous: Isometry<f32>,
             current: Isometry<f32>,
         }
 
-        #[derive(Resource, Default)]
+        #[derive(Resource)]
         /// Rapier simulation and collision queries for this dimension.
         pub struct $world {
             pipeline: PhysicsPipeline,
@@ -56,7 +58,37 @@ macro_rules! backend {
             contacts: BTreeSet<[Entity; 2]>,
             overlaps: BTreeSet<[Entity; 2]>,
             query_needs_rebuild: bool,
+            preview_bvh: Option<Bvh>,
             debug: DebugRenderPipeline,
+        }
+
+        impl Default for $world {
+            fn default() -> Self {
+                Self {
+                    pipeline: PhysicsPipeline::default(),
+                    bodies: RigidBodySet::default(),
+                    colliders: ColliderSet::default(),
+                    islands: IslandManager::default(),
+                    broad: BroadPhaseBvh::default(),
+                    narrow: NarrowPhase::default(),
+                    joints: ImpulseJointSet::default(),
+                    multibody: MultibodyJointSet::default(),
+                    ccd: CCDSolver::default(),
+                    entries: BTreeMap::default(),
+                    joint_entries: BTreeMap::default(),
+                    contacts: BTreeSet::default(),
+                    overlaps: BTreeSet::default(),
+                    query_needs_rebuild: false,
+                    preview_bvh: None,
+                    debug: DebugRenderPipeline::new(
+                        DebugRenderStyle {
+                            subdivisions: 48,
+                            ..Default::default()
+                        },
+                        DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::JOINTS,
+                    ),
+                }
+            }
         }
 
         fn groups(layers: CollisionLayers) -> InteractionGroups {
@@ -76,11 +108,24 @@ macro_rules! backend {
 
         impl $world {
             fn query<'a>(&'a self, filter: QueryFilter<'a>) -> QueryPipeline<'a> {
-                self.broad.as_query_pipeline(
+                let mut query = self.broad.as_query_pipeline(
                     self.narrow.query_dispatcher(),
                     &self.bodies,
                     &self.colliders,
                     filter,
+                );
+                if let Some(bvh) = &self.preview_bvh {
+                    query.bvh = bvh;
+                }
+                query
+            }
+
+            fn build_query_bvh(&self) -> Bvh {
+                Bvh::from_iter(
+                    BvhBuildStrategy::Binned,
+                    self.colliders.iter().map(|(handle, collider)| {
+                        (handle.into_raw_parts().0 as usize, collider.compute_aabb())
+                    }),
                 )
             }
 
@@ -103,7 +148,12 @@ macro_rules! backend {
                 Entity::try_from_bits(self.colliders.get(handle)?.user_data as u64)
             }
 
-            /// Casts a ray in a direction (normalized internally) after the most recent simulation step.
+            #[cfg(test)]
+            pub(crate) fn collider_for(&self, entity: Entity) -> Option<&Collider> {
+                self.colliders.get(self.entries.get(&entity)?.collider?)
+            }
+
+            /// Casts a ray against the most recently simulated or synchronized colliders.
             pub fn raycast(
                 &self,
                 origin: $vec,
@@ -257,16 +307,17 @@ macro_rules! backend {
             for (entity, &local, parent, body, collider, sensor, layers, material, joint) in
                 descriptors
             {
-                let transform = match parent {
+                let parent_global = match parent {
                     Some(parent) => {
                         let Ok(global) = scene.transforms.compute_global_transform(parent.parent())
                         else {
                             continue;
                         };
-                        global.mul_transform(local).compute_transform()
+                        Some(global)
                     }
-                    None => local,
+                    None => None,
                 };
+                let transform = parent_global.map_or(local, |global| global.mul_transform(local).compute_transform());
                 if !valid_transform(&transform) {
                     continue;
                 }
@@ -291,6 +342,7 @@ macro_rules! backend {
                         config: None,
                         last_local: local,
                         last_target: transform_pose,
+                        last_parent: parent_global,
                         previous: transform_pose,
                         current: transform_pose,
                     }
@@ -325,17 +377,18 @@ macro_rules! backend {
                     entry.current = transform_pose;
                 } else if body.kind == BodyKind::Kinematic
                     && (local_changed
-                        || (target_changed
-                            && parent.is_some()
+                        || (parent_global != entry.last_parent
                             && scene.characters.get(entity).is_err()))
                 {
                     rigid.set_next_kinematic_position(transform_pose);
                 }
                 entry.last_local = local;
                 entry.last_target = transform_pose;
+                entry.last_parent = parent_global;
 
                 let config = collider.as_ref().map(|descriptor| ColliderConfig {
                     descriptor: &**descriptor,
+                    revision: descriptor.last_changed(),
                     material: material.copied().unwrap_or_default(),
                     layers: layers.copied().unwrap_or_default(),
                     sensor,
@@ -345,8 +398,10 @@ macro_rules! backend {
                 let geometry_changed = match (&config, &entry.config) {
                     (None, None) => false,
                     (Some(next), Some(old)) => {
-                        (collider.as_ref().is_some_and(|shape| shape.is_changed())
-                            && next.descriptor != &old.descriptor)
+                        std::mem::discriminant(next.descriptor)
+                            != std::mem::discriminant(&old.descriptor)
+                            || (next.revision != old.revision
+                                && next.descriptor != &old.descriptor)
                             || next.material != old.material
                             || next.layers != old.layers
                             || next.sensor != old.sensor
@@ -387,12 +442,15 @@ macro_rules! backend {
                     });
                     entry.config = config.map(|c| ColliderConfig {
                         descriptor: c.descriptor.clone(),
+                        revision: c.revision,
                         material: c.material,
                         layers: c.layers,
                         sensor: c.sensor,
                         scale: c.scale,
                         asset_version: c.asset_version,
                     });
+                } else if let (Some(next), Some(old)) = (&config, &mut entry.config) {
+                    old.revision = next.revision;
                 }
                 if let Some(joint) = joint
                     && let Some(target) = joint
@@ -448,18 +506,23 @@ macro_rules! backend {
             world: ResMut<$world>,
             mut scene: SceneBodies,
             options: Res<PhysicsOptions>,
+            selection: Res<PhysicsDebugSelection>,
         ) {
             if options.simulate {
                 return;
             }
             let world = world.into_inner();
-            if !options.debug {
-                if !world.entries.is_empty() {
+            if !options.debug && selection.0.is_empty() {
+                if !world.entries.is_empty() || world.preview_bvh.is_some() {
                     *world = $world::default();
                 }
                 return;
             }
             sync_descriptors(world, &mut scene, false);
+            if world.query_needs_rebuild || world.preview_bvh.is_none() {
+                world.preview_bvh = Some(world.build_query_bvh());
+                world.query_needs_rebuild = false;
+            }
             world.contacts.clear();
             world.overlaps.clear();
         }
@@ -476,6 +539,9 @@ macro_rules! backend {
                 return;
             }
             let world = world.into_inner();
+            if world.preview_bvh.take().is_some() {
+                world.query_needs_rebuild = true;
+            }
             sync_descriptors(world, &mut scene, true);
 
             let dt = time.timestep().as_secs_f32();
@@ -484,14 +550,8 @@ macro_rules! backend {
             characters.sort_unstable_by_key(|character| character.0);
             // The simulation broad-phase belongs to the last step. Refresh the character queries
             // when geometry is spawned, removed or teleported before the next simulation step.
-            let current_bvh = (world.query_needs_rebuild && !characters.is_empty()).then(|| {
-                Bvh::from_iter(
-                    BvhBuildStrategy::Binned,
-                    world.colliders.iter().map(|(handle, collider)| {
-                        (handle.into_raw_parts().0 as usize, collider.compute_aabb())
-                    }),
-                )
-            });
+            let current_bvh = (world.query_needs_rebuild && !characters.is_empty())
+                .then(|| world.build_query_bvh());
             for (entity, controller, mut motion) in characters {
                 let Some(entry) = world
                     .entries
@@ -608,29 +668,37 @@ macro_rules! backend {
             mut world: ResMut<$world>,
             options: Res<PhysicsOptions>,
             time: Res<Time<Fixed>>,
-            mut transforms: Query<(&mut Transform, Option<&ChildOf>)>,
-            parents: Query<&GlobalTransform>,
+            mut transforms: ParamSet<(TransformHelper, Query<&mut Transform>)>,
+            parents: Query<&ChildOf>,
         ) {
             if !options.simulate {
                 return;
             }
             let alpha = time.overstep_fraction().clamp(0., 1.);
-            for (&entity, entry) in &mut world.entries {
-                if entry.body.kind == BodyKind::Static {
-                    continue;
-                }
-                let Ok((mut local, parent)) = transforms.get_mut(entity) else {
+            let mut entities: Vec<_> = world.entries.iter()
+                .filter(|(_, entry)| entry.body.kind != BodyKind::Static)
+                .map(|(&entity, _)| (parents.iter_ancestors(entity).count(), entity))
+                .collect();
+            // Convert to local space against this frame's interpolated ancestors,
+            // rather than GlobalTransform from the previous propagation pass.
+            entities.sort_unstable();
+            for (_, entity) in entities {
+                let entry = world.entries.get_mut(&entity).unwrap();
+                let parent = parents.get(entity).ok().and_then(|parent| {
+                    transforms.p0().compute_global_transform(parent.parent()).ok()
+                });
+                let mut locals = transforms.p1();
+                let Ok(mut local) = locals.get_mut(entity) else {
                     continue;
                 };
                 if *local != entry.last_local {
                     continue;
                 }
-                let parent = parent.and_then(|parent| parents.get(parent.parent()).ok());
                 let origin = parent.map_or(*local, |p| p.mul_transform(*local).compute_transform());
                 let mut transform =
                     apply_pose(entry.previous.lerp_slerp(&entry.current, alpha), origin);
                 if let Some(parent) = parent {
-                    transform = GlobalTransform::from(transform).reparented_to(parent);
+                    transform = GlobalTransform::from(transform).reparented_to(&parent);
                 }
                 transform.scale = local.scale;
                 if valid_transform(&transform) {
@@ -640,12 +708,53 @@ macro_rules! backend {
             }
         }
 
+        fn collider_debug_color(bodies: &RigidBodySet, collider: &Collider) -> Color {
+            let sleeping = collider
+                .parent()
+                .and_then(|p| bodies.get(p))
+                .is_some_and(RigidBody::is_sleeping);
+            if collider.is_sensor() {
+                Color::srgba(1.0, 0.78, 0.18, if sleeping { 0.55 } else { 0.95 })
+            } else {
+                match collider
+                    .parent()
+                    .and_then(|p| bodies.get(p))
+                    .map(RigidBody::body_type)
+                {
+                    Some(RigidBodyType::Dynamic) => Color::srgba(
+                        0.24,
+                        0.92,
+                        0.48,
+                        if sleeping { 0.55 } else { 0.95 },
+                    ),
+                    Some(
+                        RigidBodyType::KinematicPositionBased
+                        | RigidBodyType::KinematicVelocityBased,
+                    ) => Color::srgba(
+                        0.22,
+                        0.85,
+                        1.0,
+                        if sleeping { 0.55 } else { 0.95 },
+                    ),
+                    Some(RigidBodyType::Fixed) | None => Color::srgba(0.38, 0.74, 1.0, 0.9),
+                }
+            }
+        }
+
         struct Lines<'a, 'w, 's> {
             gizmos: &'a mut Gizmos<'w, 's, PhysicsGizmos>,
             bodies: &'a RigidBodySet,
+            selected: Option<&'a PhysicsDebugSelection>,
         }
 
         impl DebugRenderBackend for Lines<'_, '_, '_> {
+            fn filter_object(&self, object: DebugRenderObject<'_>) -> bool {
+                self.selected.is_none_or(|selection| {
+                    matches!(object, DebugRenderObject::Collider(_, collider)
+                        if selected_collider(selection, collider))
+                })
+            }
+
             fn draw_line(
                 &mut self,
                 object: DebugRenderObject<'_>,
@@ -655,38 +764,7 @@ macro_rules! backend {
             ) {
                 let resolved = match object {
                     DebugRenderObject::Collider(_, collider) => {
-                        let sleeping = collider
-                            .parent()
-                            .and_then(|p| self.bodies.get(p))
-                            .is_some_and(RigidBody::is_sleeping);
-                        if collider.is_sensor() {
-                            Color::srgba(1.0, 0.78, 0.18, if sleeping { 0.55 } else { 0.95 })
-                        } else {
-                            match collider
-                                .parent()
-                                .and_then(|p| self.bodies.get(p))
-                                .map(RigidBody::body_type)
-                            {
-                                Some(RigidBodyType::Dynamic) => Color::srgba(
-                                    0.24,
-                                    0.92,
-                                    0.48,
-                                    if sleeping { 0.55 } else { 0.95 },
-                                ),
-                                Some(
-                                    RigidBodyType::KinematicPositionBased
-                                    | RigidBodyType::KinematicVelocityBased,
-                                ) => Color::srgba(
-                                    0.22,
-                                    0.85,
-                                    1.0,
-                                    if sleeping { 0.55 } else { 0.95 },
-                                ),
-                                Some(RigidBodyType::Fixed) | None => {
-                                    Color::srgba(0.38, 0.74, 1.0, 0.9)
-                                }
-                            }
-                        }
+                        collider_debug_color(self.bodies, collider)
                     }
                     DebugRenderObject::ImpulseJoint(..) | DebugRenderObject::MultibodyJoint(..) => {
                         Color::srgba(0.95, 0.45, 0.95, 0.95)
@@ -697,13 +775,25 @@ macro_rules! backend {
             }
         }
 
+        fn selected_collider(selection: &PhysicsDebugSelection, collider: &Collider) -> bool {
+            Entity::try_from_bits(collider.user_data as u64)
+                .is_some_and(|entity| selection.0.contains(&entity))
+        }
+
         pub(crate) fn draw_debug(
             world: ResMut<$world>,
             options: Res<PhysicsOptions>,
+            selection: Res<PhysicsDebugSelection>,
             mut gizmos: Gizmos<PhysicsGizmos>,
-            cameras: Query<&Camera, With<$camera_marker>>,
+            cameras: Query<(&Camera, &GlobalTransform), With<$camera_marker>>,
         ) {
-            if !options.debug || !cameras.iter().any(|cam| cam.is_active) {
+            let Some(active_cam_pos) = cameras
+                .iter()
+                .find_map(|(cam, tfm)| cam.is_active.then(|| tfm.translation()))
+            else {
+                return;
+            };
+            if !options.debug && selection.0.is_empty() {
                 return;
             }
             let $world {
@@ -715,11 +805,16 @@ macro_rules! backend {
                 narrow,
                 ..
             } = world.into_inner();
-            debug.mode = DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::JOINTS;
+            debug.mode = if options.debug {
+                DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::JOINTS
+            } else {
+                DebugRenderMode::COLLIDER_SHAPES
+            };
             debug.render(
                 &mut Lines {
                     gizmos: &mut gizmos,
                     bodies,
+                    selected: (!options.debug).then_some(&selection),
                 },
                 bodies,
                 colliders,
@@ -727,6 +822,17 @@ macro_rules! backend {
                 multibody,
                 narrow,
             );
+            for (_, collider) in colliders.iter() {
+                if !options.debug && !selected_collider(&selection, collider) {
+                    continue;
+                }
+                draw_extra_collider_debug(
+                    &mut gizmos,
+                    collider,
+                    collider_debug_color(bodies, collider),
+                    active_cam_pos,
+                );
+            }
         }
     };
 }

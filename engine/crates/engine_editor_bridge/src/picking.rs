@@ -156,12 +156,9 @@ pub(crate) fn helper_icon_picking_backend(
             collider2d,
         ) in &helpers
         {
-            let is_light_or_camera =
-                has_dir_light || has_point_light || has_cam3d || has_cam2d;
-            let has_visual =
-                has_mesh3d || has_mesh2d || has_sprite || has_gltf || has_tilemap;
-            if !is_light_or_camera
-                && (has_visual || (collider3d.is_none() && collider2d.is_none()))
+            let is_light_or_camera = has_dir_light || has_point_light || has_cam3d || has_cam2d;
+            let has_visual = has_mesh3d || has_mesh2d || has_sprite || has_gltf || has_tilemap;
+            if !is_light_or_camera && (has_visual || (collider3d.is_none() && collider2d.is_none()))
             {
                 continue;
             }
@@ -193,11 +190,21 @@ pub(crate) fn helper_icon_picking_backend(
                             ));
                         }
                     } else if let Some(col3d) = collider3d {
-                        let local_from_world = global_tfm.affine().inverse();
-                        let local_origin = local_from_world.transform_point3(ray.origin);
-                        let local_dir = local_from_world.transform_vector3(*ray.direction);
-                        let half = collider3d_local_half_extents(col3d);
-                        if let Some(t) = ray_local_aabb_intersect(local_origin, local_dir, half) {
+                        let hit_t = match col3d {
+                            Collider3D::Ball(r) => {
+                                let scale = global_tfm.to_scale_rotation_translation().0.abs();
+                                let world_r = r.abs().max(0.02) * scale.max_element();
+                                ray_sphere_intersect(ray.origin, *ray.direction, center, world_r)
+                            }
+                            _ => {
+                                let local_from_world = global_tfm.affine().inverse();
+                                let local_origin = local_from_world.transform_point3(ray.origin);
+                                let local_dir = local_from_world.transform_vector3(*ray.direction);
+                                let half = collider3d_local_half_extents(col3d);
+                                ray_local_aabb_intersect(local_origin, local_dir, half)
+                            }
+                        };
+                        if let Some(t) = hit_t {
                             let hit_pos = ray.origin + *ray.direction * t;
                             picks.push((
                                 entity,
@@ -235,9 +242,24 @@ pub(crate) fn helper_icon_picking_backend(
                             ));
                         }
                     } else if let Some(col2d) = collider2d {
-                        let local_hit = global_tfm.affine().inverse().transform_point3(hit_pos);
-                        let half = collider2d_local_half_extents(col2d);
-                        if local_hit.x.abs() <= half.x && local_hit.y.abs() <= half.y {
+                        let is_hit = match col2d {
+                            Collider2D::Ball(r) => {
+                                let scale_2d = global_tfm
+                                    .to_scale_rotation_translation()
+                                    .0
+                                    .xy()
+                                    .abs()
+                                    .max_element();
+                                (hit_pos.xy() - center.xy()).length() <= r.abs().max(2.0) * scale_2d
+                            }
+                            _ => {
+                                let local_hit =
+                                    global_tfm.affine().inverse().transform_point3(hit_pos);
+                                let half = collider2d_local_half_extents(col2d);
+                                local_hit.x.abs() <= half.x && local_hit.y.abs() <= half.y
+                            }
+                        };
+                        if is_hit {
                             picks.push((
                                 entity,
                                 HitData::new(ray_id.camera, t, Some(hit_pos), Some(Vec3::Z)),
@@ -353,7 +375,12 @@ pub(crate) fn update_transform_gizmos_system(
 
     let targets = {
         let ro_transforms = transforms.as_readonly();
-        collect_topmost_selected_targets(&selection, guid_map.as_deref(), &ro_transforms, &scene_entities)
+        collect_topmost_selected_targets(
+            &selection,
+            guid_map.as_deref(),
+            &ro_transforms,
+            &scene_entities,
+        )
     };
 
     let active_cam = pointer_state
@@ -361,12 +388,8 @@ pub(crate) fn update_transform_gizmos_system(
         .and_then(|cam_e| cameras.get(cam_e).ok())
         .or_else(|| cameras.iter().find(|(cam, _, _)| cam.is_active));
 
-    let updates = gizmo_state.update_interaction(
-        config.camera_mode,
-        active_cam,
-        &pointer_state,
-        &targets,
-    );
+    let updates =
+        gizmo_state.update_interaction(config.camera_mode, active_cam, &pointer_state, &targets);
 
     if !updates.is_empty() {
         for (entity, next_tfm) in updates {
@@ -426,8 +449,8 @@ pub(crate) fn handle_viewport_selection_picking(
             for (&hit_entity, hit_data) in hits {
                 if let Some((_, guid)) = resolve_scene_entity(hit_entity, &scene_entities, &parents)
                 {
-                    let replace = top_hovered
-                        .is_none_or(|(best_depth, _)| hit_data.depth < best_depth);
+                    let replace =
+                        top_hovered.is_none_or(|(best_depth, _)| hit_data.depth < best_depth);
                     if replace {
                         top_hovered = Some((hit_data.depth, guid));
                     }
@@ -480,25 +503,34 @@ pub(crate) fn handle_viewport_selection_picking(
     }
 }
 
-type SceneOverlayItem<'a> = (
-    Entity,
-    &'a EntityGuid,
-    &'a GlobalTransform,
-    Option<&'a Visibility>,
+type SceneOverlayVisuals<'a> = (
     Option<&'a MeshPrimitive3d>,
     Option<&'a MeshPrimitive2d>,
     Option<&'a SpriteDesc>,
     Option<&'a SceneGltfModel>,
     Option<&'a SceneTilemap>,
-    Option<&'a Collider3D>,
-    Option<&'a Collider2D>,
+);
+
+type SceneOverlayPhysics<'a> = (Option<&'a Collider3D>, Option<&'a Collider2D>);
+
+type SceneOverlayHelpers<'a> = (
     Option<&'a SceneDirectionalLight>,
     Option<&'a ScenePointLight>,
     Option<&'a SceneCamera3d>,
     Option<&'a SceneCamera2d>,
 );
 
-/// Draws 2D/3D helper icons (lights/cameras) and selection/hover wireframe outlines.
+type SceneOverlayItem<'a> = (
+    Entity,
+    &'a EntityGuid,
+    &'a GlobalTransform,
+    Option<&'a Visibility>,
+    SceneOverlayVisuals<'a>,
+    SceneOverlayPhysics<'a>,
+    SceneOverlayHelpers<'a>,
+);
+
+/// Draws 2D/3D helper icons (lights/cameras) and shape-aware selection outlines.
 pub(crate) fn draw_editor_helper_icons_and_selection(
     config: Res<ViewportConfig>,
     selection: Res<EditorSelection>,
@@ -517,17 +549,9 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
         guid,
         global_tfm,
         vis,
-        mesh3d,
-        mesh2d,
-        sprite_desc,
-        gltf_model,
-        tilemap,
-        collider3d,
-        collider2d,
-        dir_light,
-        point_light,
-        cam3d,
-        cam2d,
+        (mesh3d, mesh2d, sprite_desc, gltf_model, tilemap),
+        (collider3d, collider2d),
+        (dir_light, point_light, cam3d, cam2d),
     ) in &entities
     {
         if !is_entity_hierarchy_visible(entity, vis, None, &vis_query) {
@@ -537,7 +561,7 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
         let is_selected = selection.guids().contains(guid);
         let is_hovered = !is_selected && hovered.guid == Some(*guid);
         let center = global_tfm.translation();
-        let (_, rot, _) = global_tfm.to_scale_rotation_translation();
+        let (scale, rot, _) = global_tfm.to_scale_rotation_translation();
 
         let icon_scale_3d = cam3d_pos
             .map(|c| (center.distance(c) * 0.035).clamp(0.16, 1.2))
@@ -551,11 +575,7 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                     } else {
                         Color::srgb(1.0, 0.88, 0.28)
                     };
-                    gizmos.circle(
-                        Isometry3d::new(center, rot),
-                        icon_scale_3d * 0.85,
-                        color,
-                    );
+                    gizmos.circle(Isometry3d::new(center, rot), icon_scale_3d * 0.85, color);
                     let forward = rot * Vec3::NEG_Z;
                     let right = rot * Vec3::X;
                     let up = rot * Vec3::Y;
@@ -581,12 +601,18 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                     let r = icon_scale_3d * 0.7;
                     gizmos.circle(Isometry3d::new(center, rot), r, color);
                     gizmos.circle(
-                        Isometry3d::new(center, rot * Quat::from_rotation_x(core::f32::consts::FRAC_PI_2)),
+                        Isometry3d::new(
+                            center,
+                            rot * Quat::from_rotation_x(core::f32::consts::FRAC_PI_2),
+                        ),
                         r,
                         color,
                     );
                     gizmos.circle(
-                        Isometry3d::new(center, rot * Quat::from_rotation_y(core::f32::consts::FRAC_PI_2)),
+                        Isometry3d::new(
+                            center,
+                            rot * Quat::from_rotation_y(core::f32::consts::FRAC_PI_2),
+                        ),
                         r,
                         color,
                     );
@@ -607,12 +633,22 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                 }
 
                 if is_selected || is_hovered {
-                    let outline_color = if is_selected { selected_color } else { hover_color };
+                    let outline_color = if is_selected {
+                        selected_color
+                    } else {
+                        hover_color
+                    };
                     let is_helper = dir_light.is_some()
                         || point_light.is_some()
                         || cam3d.is_some()
                         || cam2d.is_some();
-                    let half = entity_local_half_extents_3d(
+                    draw_selection_outline_3d(
+                        &mut gizmos,
+                        global_tfm,
+                        scale,
+                        rot,
+                        center,
+                        cam3d_pos,
                         mesh3d,
                         mesh2d,
                         sprite_desc,
@@ -620,8 +656,8 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                         tilemap,
                         collider3d,
                         is_helper.then_some(icon_scale_3d),
+                        outline_color,
                     );
-                    draw_oriented_box_3d(&mut gizmos, global_tfm, half, outline_color);
                 }
             }
             ViewportCameraMode::Mode2D => {
@@ -632,9 +668,13 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                         Color::srgb(0.45, 0.82, 1.0)
                     };
                     let angle = rot.to_euler(bevy_math::EulerRot::ZYX).0;
-                    let frame_size = Vec2::new(config.width as f32, config.height as f32)
-                        * c2d.scale.max(0.05);
-                    gizmos.rect_2d(Isometry2d::new(center.xy(), bevy_math::Rot2::radians(angle)), frame_size, color);
+                    let frame_size =
+                        Vec2::new(config.width as f32, config.height as f32) * c2d.scale.max(0.05);
+                    gizmos.rect_2d(
+                        Isometry2d::new(center.xy(), bevy_math::Rot2::radians(angle)),
+                        frame_size,
+                        color,
+                    );
                     gizmos.circle_2d(center.xy(), 14.0, color);
                 } else if point_light.is_some() || dir_light.is_some() {
                     let color = if is_selected {
@@ -652,15 +692,25 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                 }
 
                 if is_selected || is_hovered {
-                    let outline_color = if is_selected { selected_color } else { hover_color };
-                    let half = entity_local_half_extents_2d(
+                    let outline_color = if is_selected {
+                        selected_color
+                    } else {
+                        hover_color
+                    };
+                    let is_helper = cam2d.is_some() || dir_light.is_some() || point_light.is_some();
+                    draw_selection_outline_2d(
+                        &mut gizmos,
+                        global_tfm,
+                        scale,
+                        rot,
+                        center,
                         mesh2d,
                         sprite_desc,
                         tilemap,
                         collider2d,
-                        cam2d.is_some() || dir_light.is_some() || point_light.is_some(),
+                        is_helper,
+                        outline_color,
                     );
-                    draw_oriented_rect_2d(&mut gizmos, global_tfm, half, outline_color);
                 }
             }
         }
@@ -744,8 +794,9 @@ fn collider2d_local_half_extents(collider: &Collider2D) -> Vec2 {
             let r = r.abs().max(2.0);
             Vec2::new(r, half_seg.abs() + r)
         }
-        Collider2D::Segment(a, b) => Vec2::new(a.x.abs().max(b.x.abs()), a.y.abs().max(b.y.abs()))
-            .max(Vec2::splat(4.0)),
+        Collider2D::Segment(a, b) => {
+            Vec2::new(a.x.abs().max(b.x.abs()), a.y.abs().max(b.y.abs())).max(Vec2::splat(4.0))
+        }
         Collider2D::ConvexPolygon(pts) | Collider2D::Polyline(pts) => pts
             .iter()
             .fold(Vec2::ZERO, |acc, v| acc.max(v.abs()))
@@ -768,9 +819,11 @@ fn entity_local_half_extents_3d(
             MeshPrimitive3d::Cube { size } => size * 0.5 + Vec3::splat(0.02),
             MeshPrimitive3d::Sphere { radius } => Vec3::splat(radius.max(0.01) + 0.02),
             MeshPrimitive3d::Plane { size } => Vec3::new(size.x * 0.5, 0.03, size.y * 0.5),
-            MeshPrimitive3d::Cylinder { radius, height } => {
-                Vec3::new(radius.max(0.01) + 0.02, height.max(0.01) * 0.5 + 0.02, radius.max(0.01) + 0.02)
-            }
+            MeshPrimitive3d::Cylinder { radius, height } => Vec3::new(
+                radius.max(0.01) + 0.02,
+                height.max(0.01) * 0.5 + 0.02,
+                radius.max(0.01) + 0.02,
+            ),
         };
     }
     if let Some(model) = gltf_model {
@@ -876,6 +929,300 @@ fn draw_oriented_rect_2d(
     gizmos.linestrip_2d([p0, p1, p2, p3, p0], color);
 }
 
+const WIRE_SEGMENTS: u32 = 48;
+const ARC_SEGMENTS: u32 = 16;
+
+/// Points of a half circle (`0..=PI`) in the plane spanned by `axis_a` (cos) and `axis_b` (sin).
+fn half_arc_points(center: Vec3, axis_a: Vec3, axis_b: Vec3, radius: f32) -> Vec<Vec3> {
+    (0..=ARC_SEGMENTS)
+        .map(|i| {
+            let theta = core::f32::consts::PI * i as f32 / ARC_SEGMENTS as f32;
+            let (sin, cos) = bevy_math::ops::sin_cos(theta);
+            center + axis_a * (radius * cos) + axis_b * (radius * sin)
+        })
+        .collect()
+}
+
+fn draw_sphere_wireframe_3d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    center: Vec3,
+    rot: Quat,
+    radius: f32,
+    cam_pos: Option<Vec3>,
+    color: Color,
+) {
+    // `gizmos.circle` lies in the XY plane of its Isometry3d (normal = local +Z).
+    for plane in [
+        rot,
+        rot * Quat::from_rotation_x(core::f32::consts::FRAC_PI_2),
+        rot * Quat::from_rotation_y(core::f32::consts::FRAC_PI_2),
+    ] {
+        gizmos
+            .circle(Isometry3d::new(center, plane), radius, color)
+            .resolution(WIRE_SEGMENTS);
+    }
+    // Camera-facing silhouette so the sphere reads as a sphere from any view angle.
+    if let Some(cam) = cam_pos {
+        let to_cam = cam - center;
+        let dist = to_cam.length();
+        if radius > 0.0 && dist > radius * 1.02 {
+            let normal = to_cam / dist;
+            let ratio = (radius / dist).min(0.999);
+            let horizon_center = center + normal * (radius * ratio);
+            let horizon_radius = radius * (1.0 - ratio * ratio).sqrt();
+            gizmos
+                .circle(
+                    Isometry3d::new(horizon_center, Quat::from_rotation_arc(Vec3::Z, normal)),
+                    horizon_radius,
+                    color,
+                )
+                .resolution(WIRE_SEGMENTS);
+        }
+    }
+}
+
+fn draw_cylinder_wireframe_3d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    center: Vec3,
+    rot: Quat,
+    half_height: f32,
+    radius: f32,
+    color: Color,
+) {
+    let up = rot * Vec3::Y;
+    let ring_rot = rot * Quat::from_rotation_x(core::f32::consts::FRAC_PI_2);
+    for sign in [1.0, -1.0] {
+        gizmos
+            .circle(
+                Isometry3d::new(center + up * (half_height * sign), ring_rot),
+                radius,
+                color,
+            )
+            .resolution(WIRE_SEGMENTS);
+    }
+    for dir in [Vec3::X, Vec3::NEG_X, Vec3::Z, Vec3::NEG_Z] {
+        let side = rot * dir * radius;
+        gizmos.line(
+            center + side - up * half_height,
+            center + side + up * half_height,
+            color,
+        );
+    }
+}
+
+fn draw_capsule_wireframe_3d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    center: Vec3,
+    rot: Quat,
+    half_segment: f32,
+    radius: f32,
+    color: Color,
+) {
+    draw_cylinder_wireframe_3d(gizmos, center, rot, half_segment, radius, color);
+    let up = rot * Vec3::Y;
+    for axis in [rot * Vec3::X, rot * Vec3::Z] {
+        gizmos.linestrip(
+            half_arc_points(center + up * half_segment, axis, up, radius),
+            color,
+        );
+        gizmos.linestrip(
+            half_arc_points(center - up * half_segment, axis, -up, radius),
+            color,
+        );
+    }
+}
+
+fn draw_capsule_wireframe_2d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    center: Vec2,
+    rot: Quat,
+    half_segment: f32,
+    radius: f32,
+    color: Color,
+) {
+    let rot2 = bevy_math::Rot2::radians(rot.to_euler(bevy_math::EulerRot::ZYX).0);
+    let to_world = |p: Vec2| center + rot2 * p;
+    for x in [radius, -radius] {
+        gizmos.line_2d(
+            to_world(Vec2::new(x, -half_segment)),
+            to_world(Vec2::new(x, half_segment)),
+            color,
+        );
+    }
+    for sign in [1.0_f32, -1.0] {
+        let points = (0..=ARC_SEGMENTS).map(|i| {
+            let theta = core::f32::consts::PI * i as f32 / ARC_SEGMENTS as f32;
+            let (sin, cos) = bevy_math::ops::sin_cos(theta);
+            to_world(Vec2::new(
+                radius * cos,
+                sign * (half_segment + radius * sin),
+            ))
+        });
+        gizmos.linestrip_2d(points, color);
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Shape-aware outline needs the transform plus every visual/collider descriptor"
+)]
+fn draw_selection_outline_3d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    global_tfm: &GlobalTransform,
+    scale: Vec3,
+    rot: Quat,
+    center: Vec3,
+    cam_pos: Option<Vec3>,
+    mesh3d: Option<&MeshPrimitive3d>,
+    mesh2d: Option<&MeshPrimitive2d>,
+    sprite_desc: Option<&SpriteDesc>,
+    gltf_model: Option<&SceneGltfModel>,
+    tilemap: Option<&SceneTilemap>,
+    collider3d: Option<&Collider3D>,
+    helper_scale: Option<f32>,
+    color: Color,
+) {
+    let abs_scale = scale.abs();
+    let max_scale = abs_scale.max_element();
+    let radial_scale = abs_scale.x.max(abs_scale.z);
+
+    match mesh3d.copied() {
+        Some(MeshPrimitive3d::Sphere { radius }) => {
+            draw_sphere_wireframe_3d(
+                gizmos,
+                center,
+                rot,
+                radius.max(0.01) * max_scale + 0.025,
+                cam_pos,
+                color,
+            );
+            return;
+        }
+        Some(MeshPrimitive3d::Cylinder { radius, height }) => {
+            draw_cylinder_wireframe_3d(
+                gizmos,
+                center,
+                rot,
+                height.max(0.01) * 0.5 * abs_scale.y + 0.02,
+                radius.max(0.01) * radial_scale + 0.02,
+                color,
+            );
+            return;
+        }
+        _ => {}
+    }
+
+    let has_visual = mesh3d.is_some()
+        || gltf_model.is_some()
+        || mesh2d.is_some()
+        || sprite_desc.is_some()
+        || tilemap.is_some();
+    if !has_visual && helper_scale.is_none() {
+        match collider3d {
+            Some(Collider3D::Ball(r)) => {
+                draw_sphere_wireframe_3d(
+                    gizmos,
+                    center,
+                    rot,
+                    r.abs().max(0.02) * max_scale + 0.015,
+                    cam_pos,
+                    color,
+                );
+                return;
+            }
+            Some(Collider3D::Capsule(h, r)) => {
+                draw_capsule_wireframe_3d(
+                    gizmos,
+                    center,
+                    rot,
+                    h.abs() * abs_scale.y,
+                    r.abs().max(0.02) * radial_scale + 0.015,
+                    color,
+                );
+                return;
+            }
+            Some(Collider3D::Cylinder(h, r)) => {
+                draw_cylinder_wireframe_3d(
+                    gizmos,
+                    center,
+                    rot,
+                    h.abs().max(0.02) * abs_scale.y + 0.015,
+                    r.abs().max(0.02) * radial_scale + 0.015,
+                    color,
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let half = entity_local_half_extents_3d(
+        mesh3d,
+        mesh2d,
+        sprite_desc,
+        gltf_model,
+        tilemap,
+        collider3d,
+        helper_scale,
+    );
+    draw_oriented_box_3d(gizmos, global_tfm, half, color);
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Shape-aware outline needs the transform plus every 2D visual/collider descriptor"
+)]
+fn draw_selection_outline_2d(
+    gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
+    global_tfm: &GlobalTransform,
+    scale: Vec3,
+    rot: Quat,
+    center: Vec3,
+    mesh2d: Option<&MeshPrimitive2d>,
+    sprite_desc: Option<&SpriteDesc>,
+    tilemap: Option<&SceneTilemap>,
+    collider2d: Option<&Collider2D>,
+    is_helper: bool,
+    color: Color,
+) {
+    let abs_scale = scale.xy().abs();
+    let max_scale = abs_scale.max_element();
+
+    if let Some(MeshPrimitive2d::Circle { radius }) = mesh2d.copied() {
+        gizmos
+            .circle_2d(center.xy(), radius.max(0.5) * max_scale + 3.0, color)
+            .resolution(WIRE_SEGMENTS);
+        return;
+    }
+
+    let has_visual = mesh2d.is_some() || sprite_desc.is_some() || tilemap.is_some();
+    if !has_visual && !is_helper {
+        match collider2d {
+            Some(Collider2D::Ball(r)) => {
+                gizmos
+                    .circle_2d(center.xy(), r.abs().max(2.0) * max_scale + 3.0, color)
+                    .resolution(WIRE_SEGMENTS);
+                return;
+            }
+            Some(Collider2D::Capsule(h, r)) => {
+                draw_capsule_wireframe_2d(
+                    gizmos,
+                    center.xy(),
+                    rot,
+                    h.abs() * abs_scale.y,
+                    r.abs().max(2.0) * abs_scale.x + 3.0,
+                    color,
+                );
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let half = entity_local_half_extents_2d(mesh2d, sprite_desc, tilemap, collider2d, is_helper);
+    draw_oriented_rect_2d(gizmos, global_tfm, half, color);
+}
+
 fn draw_camera_3d_frustum(
     gizmos: &mut Gizmos<EditorOverlayGizmoGroup>,
     center: Vec3,
@@ -901,8 +1248,16 @@ fn draw_camera_3d_frustum(
     gizmos.line(tr, br, color);
     gizmos.line(br, bl, color);
     gizmos.line(bl, tl, color);
-    gizmos.line(tl + up * (scale * 0.25), far_center + h + up * (scale * 0.55), color);
-    gizmos.line(far_center + h + up * (scale * 0.55), tr + up * (scale * 0.25), color);
+    gizmos.line(
+        tl + up * (scale * 0.25),
+        far_center + h + up * (scale * 0.55),
+        color,
+    );
+    gizmos.line(
+        far_center + h + up * (scale * 0.55),
+        tr + up * (scale * 0.25),
+        color,
+    );
 }
 
 /// Renders active 3D or 2D transform gizmo handles for top-most selected scene entities.

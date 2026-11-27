@@ -110,11 +110,11 @@ cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engin
    cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engine/samples/sandbox_3d --physics-debug
    ```
 
-2. Выберите объект во вьюпорте. Клавиша `F` фокусирует камеру; переназначьте `editor_focus` в **Gameplay → Input bindings** и проверьте новую клавишу. Кнопка **Reset** восстанавливает авторскую привязку. Настройки сохраняются отдельно для проекта; для этого у проекта должен быть постоянный `project.id`. `project.input_mapping` указывается относительно `assets_dir`.
+2. Выберите объект во вьюпорте. Клавиша `F` фокусирует камеру; переназначьте `editor_focus` в **Gameplay → Input bindings** и проверьте новую привязку. После нажатия на текущую привязку можно нажать клавишу или выбрать кнопку мыши, кнопку либо ось геймпада. Кнопка **Reset** восстанавливает авторскую привязку. Настройки сохраняются отдельно для проекта; для этого у проекта должен быть постоянный `project.id`. `project.input_mapping` указывается относительно `assets_dir`.
 3. Импортируйте WAV, OGG/Vorbis, MP3 или FLAC. Выберите клип в **Content Browser → Audio → Play preview** и измените уровень `UI` или `MASTER` в **Gameplay → Audio mixer**. Если нужен тестовый файл: `python3 engine/samples/make_audio_preview.py /tmp/bevy9-preview.wav`.
 4. Для пространственного звука добавьте `AudioEmitter` объекту, выберите его `clip` и установите `Scene2D` или `Scene3D`. Разместите `AudioListener` на игровой камере (в сэмплах он уже есть) и нажмите **Preview emitter** в Inspector. Перемещайте объект и меняйте громкость выбранной шины. `min_distance` и `max_distance` задаются в единицах сцены; у 2D-спрайтов это обычно пиксели. Чтобы источник включался в standalone, задайте `autoplay`.
 
-В редакторе контуры показывают авторские позиции, а предпрослушивание работает через шину UI. Симуляция и автозапуск источников доступны в standalone; Play-In-Editor относится к этапу 6.
+В редакторе коллайдеры выбранных объектов видны и при выключенном глобальном показе контуров. Content Browser использует шину UI, а предпрослушивание `AudioEmitter` — шину самого источника. Симуляция и автозапуск источников доступны в standalone; Play-In-Editor относится к этапу 6.
 
 Для игрового кода используйте `ActionState::get` в `Update` или `FixedActionState::get` в `FixedUpdate`, `PhysicsWorld2D` / `PhysicsWorld3D` для запросов и импульсов, `CharacterMotion2D` / `CharacterMotion3D` для управления кинематическим персонажем. `CollisionEvent` и `TriggerEvent` доступны через ECS Observers.
 

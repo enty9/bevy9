@@ -1,7 +1,7 @@
 //! XYZ shape conversion and stair/slope policy.
 
 use bevy_camera::Camera3d;
-use bevy_math::Quat;
+use bevy_math::{Isometry3d, Quat};
 use rapier::{
     control::{CharacterAutostep, CharacterLength, KinematicCharacterController},
     na::{DMatrix, Quaternion, Translation3, UnitQuaternion},
@@ -38,6 +38,29 @@ fn from_vector(v: Vector<f32>) -> Vec3 {
 }
 fn debug_point(p: Point<f32>) -> Vec3 {
     from_vector(p.coords)
+}
+fn draw_extra_collider_debug(
+    gizmos: &mut Gizmos<PhysicsGizmos>,
+    collider: &Collider,
+    color: Color,
+    cam_pos: Vec3,
+) {
+    if let TypedShape::Ball(ball) = collider.shape().as_typed_shape() {
+        let center = from_vector(collider.position().translation.vector);
+        let to_cam = cam_pos - center;
+        let dist = to_cam.length();
+        let r = ball.radius;
+        if dist > r * 1.02 && r > 0.0 {
+            let normal = to_cam / dist;
+            let ratio = (r / dist).min(0.999);
+            let horizon_center = center + normal * (r * ratio);
+            let horizon_radius = r * (1.0 - ratio * ratio).sqrt();
+            let rot = Quat::from_rotation_arc(Vec3::Z, normal);
+            gizmos
+                .circle(Isometry3d::new(horizon_center, rot), horizon_radius, color)
+                .resolution(48);
+        }
+    }
 }
 fn dimensions(v: Vec3) -> Vec3 {
     v

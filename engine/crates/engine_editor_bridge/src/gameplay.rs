@@ -2,8 +2,13 @@
 
 use bevy_asset::{AssetServer, Assets, LoadState};
 use bevy_ecs::{
+    change_detection::DetectChangesMut,
     system::{Command, In, Query, Res, ResMut},
     world::World,
+};
+use bevy_input::{
+    gamepad::{GamepadAxis, GamepadButton},
+    mouse::MouseButton,
 };
 use bevy_remote::{builtin_methods::parse_some, error_codes, BrpError, BrpResult, RemotePlugin};
 use bevy_settings::SaveSettingsSync;
@@ -15,7 +20,7 @@ use engine_input::{
     ActionState, InputContexts, InputDomain, InputMappingAsset, InputOverrides, InputSource,
     ProjectInputMapping,
 };
-use engine_physics::PhysicsOptions;
+use engine_physics::{PhysicsDebugSelection, PhysicsOptions};
 use engine_render::camera::EditorCameraState;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -81,7 +86,17 @@ fn list_bindings(In(_): In<Option<Value>>, world: &mut World) -> BrpResult {
     }))
         })
         .collect::<Vec<_>>();
-    Ok(json!({"bindings": bindings, "status": null}))
+    let sources = [MouseButton::Left, MouseButton::Middle, MouseButton::Right]
+        .into_iter()
+        .map(InputSource::Mouse)
+        .chain(
+            GamepadButton::all()
+                .into_iter()
+                .map(InputSource::GamepadButton),
+        )
+        .chain(GamepadAxis::all().into_iter().map(InputSource::GamepadAxis))
+        .collect::<Vec<_>>();
+    Ok(json!({"bindings": bindings, "status": null, "sources": sources}))
 }
 
 pub(crate) fn focus_selection(
@@ -109,6 +124,20 @@ pub(crate) fn focus_selection(
         camera.focus = target.translation();
         camera.center_2d = target.translation().truncate();
     }
+}
+
+pub(crate) fn sync_physics_selection(
+    selection: Res<EditorSelection>,
+    guids: Res<EntityGuidMap>,
+    mut physics: ResMut<PhysicsDebugSelection>,
+) {
+    physics.set_if_neq(PhysicsDebugSelection(
+        selection
+            .guids()
+            .iter()
+            .filter_map(|&guid| guids.get_entity(guid))
+            .collect(),
+    ));
 }
 
 #[derive(Deserialize)]

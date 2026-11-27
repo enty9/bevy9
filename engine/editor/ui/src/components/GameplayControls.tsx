@@ -10,6 +10,7 @@ type InputSource =
 
 interface Bindings {
   status: string | null;
+  sources?: InputSource[];
   bindings: Array<{
     id: string;
     context: string;
@@ -93,18 +94,15 @@ export function GameplayControls({
             bus,
             settings: next,
           });
+          if (pendingBusRef.current.has(bus)) continue;
           setMixer((prev) => {
             if (!prev) return updated;
-            const merged = { ...updated.buses };
-            for (const b of buses) {
-              if (
-                pendingBusRef.current.has(b) ||
-                (b !== bus && activeBusRef.current.has(b))
-              ) {
-                merged[b] = prev.buses[b];
-              }
-            }
-            return { available: updated.available, buses: merged };
+            // Requests for different buses may finish out of order. A response
+            // is only authoritative for the bus it changed.
+            return {
+              available: updated.available,
+              buses: { ...prev.buses, [bus]: updated.buses[bus] },
+            };
           });
         }
       } catch (failure: unknown) {
@@ -180,9 +178,14 @@ export function GameplayControls({
     if (!capture) return;
     const bindingId = capture;
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === "Tab") return;
+      if (e.target instanceof HTMLSelectElement) {
+        if (e.code === "Escape") setCapture(null);
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
-      if (e.code === "Escape" || e.code === "Tab") {
+      if (e.code === "Escape") {
         setCapture(null);
         return;
       }
@@ -193,9 +196,12 @@ export function GameplayControls({
         void bind(bindingId, { Key: code });
       }
     };
+    const cancelCapture = () => setCapture(null);
     window.addEventListener("keydown", onKeyDown, { capture: true });
+    window.addEventListener("blur", cancelCapture);
     return () => {
       window.removeEventListener("keydown", onKeyDown, { capture: true });
+      window.removeEventListener("blur", cancelCapture);
     };
   }, [capture, bind]);
 
@@ -285,43 +291,67 @@ export function GameplayControls({
             {bindings?.bindings.map((row) => {
               const isCapturing = capture === row.id;
               return (
-                <div className="gameplay-binding" key={row.id}>
-                  <div
-                    className="gameplay-binding-info"
-                    title={`${row.domain} / ${row.context} / ${row.id}`}
-                  >
-                    <span className="truncate">
-                      <strong>{row.action}</strong>
-                      {row.id !== row.action && (
-                        <span className="gameplay-binding-id"> · {row.id}</span>
-                      )}
-                    </span>
-                    <small className="muted">
-                      {row.domain} / {row.context}
-                    </small>
-                  </div>
-                  <button
-                    type="button"
-                    className={isCapturing ? "primary" : ""}
-                    disabled={pending}
-                    onBlur={() => {
-                      if (capture === row.id) setCapture(null);
-                    }}
-                    onClick={() =>
-                      setCapture((prev) => (prev === row.id ? null : row.id))
+                <div
+                  key={row.id}
+                  onBlur={(event) => {
+                    if (isCapturing && !event.currentTarget.contains(event.relatedTarget)) {
+                      setCapture(null);
                     }
-                  >
-                    {isCapturing ? "Press key…" : sourceName(row.source)}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost-btn icon-mini"
-                    disabled={!row.overridden || pending}
-                    title={`Restore ${sourceName(row.default_source)}`}
-                    onClick={() => void bind(row.id, null)}
-                  >
-                    <RotateCcw size={12} />
-                  </button>
+                  }}
+                >
+                  <div className="gameplay-binding">
+                    <div
+                      className="gameplay-binding-info"
+                      title={`${row.domain} / ${row.context} / ${row.id}`}
+                    >
+                      <span className="truncate">
+                        <strong>{row.action}</strong>
+                        {row.id !== row.action && (
+                          <span className="gameplay-binding-id"> · {row.id}</span>
+                        )}
+                      </span>
+                      <small className="muted">
+                        {row.domain} / {row.context}
+                      </small>
+                    </div>
+                    <button
+                      type="button"
+                      className={isCapturing ? "primary" : ""}
+                      disabled={pending}
+                      onClick={() =>
+                        setCapture((prev) => (prev === row.id ? null : row.id))
+                      }
+                    >
+                      {isCapturing ? "Press a key…" : sourceName(row.source)}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-btn icon-mini"
+                      disabled={!row.overridden || pending}
+                      title={`Restore ${sourceName(row.default_source)}`}
+                      onClick={() => void bind(row.id, null)}
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  </div>
+                  {isCapturing && !!bindings.sources?.length && (
+                    <select
+                      aria-label={`Mouse or gamepad source for ${row.action}`}
+                      value=""
+                      onChange={(event) => {
+                        const index = event.currentTarget.value;
+                        const source = bindings.sources?.[Number(index)];
+                        if (index !== "" && source) void bind(row.id, source);
+                      }}
+                    >
+                      <option value="" disabled>Or choose mouse / gamepad…</option>
+                      {bindings.sources.map((source, index) => (
+                        <option key={sourceName(source)} value={index}>
+                          {sourceName(source)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
               );
             })}

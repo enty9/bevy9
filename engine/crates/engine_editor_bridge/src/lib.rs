@@ -2,11 +2,11 @@
 
 pub mod brp;
 pub mod config;
+mod gameplay;
 pub mod history;
 pub mod ipc_server;
 pub mod picking;
 pub mod selection;
-mod gameplay;
 
 /// Commonly used editor bridge types and constants.
 pub mod prelude {
@@ -86,11 +86,12 @@ impl Plugin for EditorBridgePlugin {
             Update,
             (
                 gameplay::focus_selection.before(engine_render::EditorCameraSystems),
-                picking::update_transform_gizmos_system
-                    .before(engine_render::EditorCameraSystems),
+                picking::update_transform_gizmos_system.before(engine_render::EditorCameraSystems),
                 history::capture_gizmo_commits_system,
                 history::handle_native_history_shortcuts_system,
                 picking::handle_viewport_selection_picking,
+                gameplay::sync_physics_selection
+                    .run_if(resource_exists::<engine_physics::PhysicsDebugSelection>),
                 picking::draw_editor_helper_icons_and_selection
                     .run_if(resource_exists::<GizmoStorage<EditorOverlayGizmoGroup, ()>>),
                 picking::draw_transform_gizmos_system

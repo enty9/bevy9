@@ -37,6 +37,7 @@ fn from_vector(v: Vector<f32>) -> Vec2 {
 fn debug_point(p: Point<f32>) -> Vec3 {
     Vec3::new(p.x, p.y, 0.)
 }
+fn draw_extra_collider_debug(_: &mut Gizmos<PhysicsGizmos>, _: &Collider, _: Color, _: Vec3) {}
 fn dimensions(v: Vec3) -> Vec2 {
     v.truncate()
 }

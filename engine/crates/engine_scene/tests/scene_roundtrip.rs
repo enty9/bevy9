@@ -328,6 +328,18 @@ fn sample_sandbox_scenes_load_cleanly() {
         assert_eq!(world.query::<&DirectionalLight>().iter(world).count(), 1);
         assert_eq!(world.query::<&PointLight>().iter(world).count(), 1);
         assert_eq!(world.query::<&Camera3d>().iter(world).count(), 1);
+        let mut colliders = world.query::<(&Name, &Collider3D)>();
+        for (name, collider) in [
+            ("Floor", Collider3D::Cuboid(Vec3::new(6., 0.1, 6.))),
+            ("AccentSphere", Collider3D::Ball(0.65)),
+        ] {
+            assert!(
+                colliders.iter(world).any(|(entity_name, shape)| {
+                    entity_name.as_str() == name && shape == &collider
+                }),
+                "{name} must have a collider matching its demo mesh"
+            );
+        }
     }
 
     // 2D sample verification
@@ -573,14 +585,20 @@ fn stage_five_inspector_default_json_payloads_deserialize_to_defaults() {
         .expect("CharacterController2D");
     let ctrl2_def = CharacterController2D::default();
     assert_eq!(ctrl2.platformer, ctrl2_def.platformer);
-    assert_eq!(ctrl2.slope_degrees.to_bits(), ctrl2_def.slope_degrees.to_bits());
+    assert_eq!(
+        ctrl2.slope_degrees.to_bits(),
+        ctrl2_def.slope_degrees.to_bits()
+    );
     assert_eq!(ctrl2.ground_snap.to_bits(), ctrl2_def.ground_snap.to_bits());
 
     let ctrl3 = world
         .get::<CharacterController3D>(entity)
         .expect("CharacterController3D");
     let ctrl3_def = CharacterController3D::default();
-    assert_eq!(ctrl3.slope_degrees.to_bits(), ctrl3_def.slope_degrees.to_bits());
+    assert_eq!(
+        ctrl3.slope_degrees.to_bits(),
+        ctrl3_def.slope_degrees.to_bits()
+    );
     assert_eq!(ctrl3.step_height.to_bits(), ctrl3_def.step_height.to_bits());
     assert_eq!(ctrl3.ground_snap.to_bits(), ctrl3_def.ground_snap.to_bits());
 
@@ -592,4 +610,37 @@ fn stage_five_inspector_default_json_payloads_deserialize_to_defaults() {
         world.get::<PhysicsJoint3D>(entity),
         Some(&PhysicsJoint3D::default())
     );
+}
+
+#[test]
+fn write_reflected_component_switches_collider3d_between_cuboid_and_ball() {
+    let mut app = setup_scene_app(WorldMode::Mode3D, true);
+    let entity = app.world_mut().spawn((SceneEntity, EntityGuid::new())).id();
+    let type_path = "engine_physics::Collider3D";
+
+    let cases = [
+        (
+            json!({ "Cuboid": [0.6, 0.6, 0.6] }),
+            Collider3D::Cuboid(Vec3::splat(0.6)),
+        ),
+        (json!({ "Ball": 0.65 }), Collider3D::Ball(0.65)),
+        (
+            json!({ "Capsule": [0.5, 0.35] }),
+            Collider3D::Capsule(0.5, 0.35),
+        ),
+        (
+            json!({ "Cylinder": [0.5, 0.5] }),
+            Collider3D::Cylinder(0.5, 0.5),
+        ),
+        (
+            json!({ "Cuboid": [0.6, 0.6, 0.6] }),
+            Collider3D::Cuboid(Vec3::splat(0.6)),
+        ),
+        (json!({ "Ball": 0.65 }), Collider3D::Ball(0.65)),
+    ];
+    for (payload, expected) in cases {
+        write_reflected_component_json(app.world_mut(), entity, type_path, &payload)
+            .unwrap_or_else(|err| panic!("failed to write {payload}: {err}"));
+        assert_eq!(app.world().get::<Collider3D>(entity), Some(&expected));
+    }
 }

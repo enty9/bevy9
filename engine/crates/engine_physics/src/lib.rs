@@ -1,5 +1,7 @@
 //! Fixed-step 2D and 3D Rapier physics.
 
+use std::collections::BTreeSet;
+
 use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, PreUpdate};
 use bevy_ecs::{
     prelude::*,
@@ -394,6 +396,10 @@ pub struct CastHit<V> {
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PhysicsDebugSyncSet;
 
+/// Entities whose colliders should be shown even when global debugging is off.
+#[derive(Resource, Default, PartialEq, Eq)]
+pub struct PhysicsDebugSelection(pub BTreeSet<Entity>);
+
 /// Installs both fixed-step physics worlds without requiring a renderer.
 pub struct EnginePhysicsPlugin;
 
@@ -403,6 +409,7 @@ impl Plugin for EnginePhysicsPlugin {
         app.init_resource::<Gravity>()
             .init_resource::<PhysicsTimestep>()
             .init_resource::<PhysicsOptions>()
+            .init_resource::<PhysicsDebugSelection>()
             .init_resource::<PhysicsWorld2D>()
             .init_resource::<PhysicsWorld3D>()
             .init_resource::<dim2::TilemapShapes>()
@@ -466,7 +473,7 @@ impl Plugin for PhysicsDebugPlugin {
         app.insert_gizmo_config(
             PhysicsGizmos,
             GizmoConfig {
-                depth_bias: -0.02,
+                depth_bias: -0.04,
                 line: GizmoLineConfig {
                     width: 2.0,
                     ..Default::default()
