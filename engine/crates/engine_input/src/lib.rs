@@ -70,7 +70,7 @@ pub enum InputTrigger {
     Chord(InputSource),
 }
 
-/// Scalar value transformations applied in order.
+/// Value and routing transformations applied in order.
 #[derive(Debug, Clone, Reflect, Serialize, Deserialize)]
 pub enum InputModifier {
     /// Suppress input at or below this magnitude.
@@ -79,6 +79,8 @@ pub enum InputModifier {
     Scale(f32),
     /// Negate.
     Invert,
+    /// Route the scalar to a different axis channel.
+    Swizzle(AxisChannel),
 }
 
 /// Destination for a scalar contribution.
@@ -168,6 +170,24 @@ impl InputMappingAsset {
                 {
                     return Err(format!(
                         "invalid binding or action reference: {}",
+                        binding.id
+                    ));
+                }
+                let valid_duration = match binding.trigger {
+                    InputTrigger::Hold(seconds) | InputTrigger::Tap(seconds) => {
+                        seconds.is_finite() && seconds >= 0.
+                    }
+                    _ => true,
+                };
+                if !valid_duration
+                    || binding.modifiers.iter().any(|modifier| match *modifier {
+                        InputModifier::Deadzone(n) => !n.is_finite() || n < 0.,
+                        InputModifier::Scale(n) => !n.is_finite(),
+                        _ => false,
+                    })
+                {
+                    return Err(format!(
+                        "invalid trigger or modifier for binding: {}",
                         binding.id
                     ));
                 }
@@ -338,6 +358,7 @@ struct BindingMemory {
 struct Resolver {
     active: BTreeSet<String>,
     domain: InputDomain,
+    block_on_next_mapping: bool,
     bindings: BTreeMap<String, BindingMemory>,
     pending: BTreeMap<String, ActionSample>,
 }
@@ -362,7 +383,7 @@ impl BindingMemory {
                 InputModifier::Deadzone(n) if value.abs() <= n => value = 0.0,
                 InputModifier::Scale(n) => value *= n,
                 InputModifier::Invert => value = -value,
-                InputModifier::Deadzone(_) => {}
+                InputModifier::Deadzone(_) | InputModifier::Swizzle(_) => {}
             }
         }
         if !value.is_finite() {
@@ -419,11 +440,18 @@ struct Hardware<'w, 's> {
     keys: Option<Res<'w, ButtonInput<KeyCode>>>,
     mouse: Option<Res<'w, ButtonInput<MouseButton>>>,
     gamepads: Query<'w, 's, &'static Gamepad>,
-    forwarded: Option<Res<'w, ForwardedInput>>,
+    forwarded: Option<ResMut<'w, ForwardedInput>>,
+}
+
+fn short_press<T: Copy + Eq + std::hash::Hash + Send + Sync + 'static>(
+    buttons: &ButtonInput<T>,
+    button: T,
+) -> bool {
+    buttons.just_pressed(button) && buttons.just_released(button)
 }
 
 fn sample_input(
-    hardware: Hardware,
+    mut hardware: Hardware,
     time: Res<Time<Real>>,
     selection: Res<InputContexts>,
     mapping: (
@@ -464,15 +492,46 @@ fn sample_input(
     };
     let (assets, handle) = mapping;
     let mapping = handle.and_then(|handle| assets.get(&handle.0));
+    let short_press = |source| match source {
+        InputSource::Key(key) => {
+            hardware
+                .keys
+                .as_ref()
+                .is_some_and(|keys| short_press(keys, key))
+                || hardware
+                    .forwarded
+                    .as_ref()
+                    .is_some_and(|input| short_press(&input.keys, key))
+        }
+        InputSource::Mouse(button) => {
+            hardware
+                .mouse
+                .as_ref()
+                .is_some_and(|mouse| short_press(mouse, button))
+                || hardware
+                    .forwarded
+                    .as_ref()
+                    .is_some_and(|input| short_press(&input.mouse, button))
+        }
+        InputSource::GamepadButton(button) => hardware
+            .gamepads
+            .iter()
+            .any(|pad| pad.just_pressed(button) && pad.just_released(button)),
+        InputSource::GamepadAxis(_) => false,
+    };
     for event in states.0.resolve(
         &mut states.1,
         selection.as_ref(),
         mapping,
         &overrides,
-        sample,
+        (sample, short_press),
         time.delta_secs(),
     ) {
         commands.trigger(event);
+    }
+    if let Some(input) = hardware.forwarded.as_deref_mut() {
+        input.keys.clear();
+        input.mouse.clear();
     }
 }
 
@@ -483,7 +542,7 @@ impl Resolver {
         selection: &InputContexts,
         mapping: Option<&InputMappingAsset>,
         overrides: &InputOverrides,
-        sample: impl Fn(InputSource) -> f32,
+        (sample, short_press): (impl Fn(InputSource) -> f32, impl Fn(InputSource) -> bool),
         dt: f32,
     ) -> Vec<InputContextChanged> {
         let contexts = mapping
@@ -516,25 +575,72 @@ impl Resolver {
             self.pending.clear();
             state.0.clear();
             self.bindings.clear();
+            self.block_on_next_mapping = true;
+        }
+        let block_inputs = self.block_on_next_mapping;
+        if mapping.is_some() {
+            self.block_on_next_mapping = false;
         }
 
+        let axes: BTreeMap<_, _> = mapping
+            .into_iter()
+            .flat_map(|m| &m.actions)
+            .map(|action| (action.id.as_str(), action.axis))
+            .collect();
         let mut sampled = BTreeMap::new();
         let mut used = BTreeSet::new();
         for context in contexts {
             for binding in &context.bindings {
-                let (winner, value) = sampled
+                let Some(axis) = axes.get(binding.action.as_str()) else {
+                    continue;
+                };
+                let (winner, value, transient) = sampled
                     .entry(binding.action.as_str())
-                    .or_insert((context.id.as_str(), Vec3::ZERO));
+                    .or_insert((context.id.as_str(), Vec3::ZERO, Vec3::ZERO));
                 if *winner == context.id {
                     used.insert(binding.id.as_str());
                     let source = overrides.source(binding);
                     let memory = self.bindings.entry(binding.id.clone()).or_default();
-                    if switched_domain {
+                    if block_inputs {
                         memory.source = Some(source);
                         memory.blocked_until_release = true;
                     }
-                    let contribution = memory.evaluate(binding, source, &sample, dt);
-                    value[binding.channel as usize] += contribution;
+                    // ButtonInput records both edges even if the button wasn't held at
+                    // either sample. Replay that press before sampling the final release.
+                    let replay = !block_inputs
+                        && !memory.down
+                        && sample(source) == 0.
+                        && short_press(source)
+                        && !memory.blocked_until_release;
+                    let pulse = if replay {
+                        memory.evaluate(
+                            binding,
+                            source,
+                            &|key| if key == source { 1. } else { sample(key) },
+                            0.,
+                        )
+                    } else {
+                        0.
+                    };
+                    let contribution =
+                        memory.evaluate(binding, source, &sample, if replay { 0. } else { dt });
+                    let channel = binding
+                        .modifiers
+                        .iter()
+                        .rev()
+                        .find_map(|modifier| match *modifier {
+                            InputModifier::Swizzle(channel) => Some(channel),
+                            _ => None,
+                        })
+                        .unwrap_or(binding.channel);
+                    if matches!(axis, ActionAxis::Bool) {
+                        // Opposite signed bindings still represent an active digital action.
+                        value.x = value.x.max(f32::from(contribution != 0.));
+                        transient.x = transient.x.max(f32::from(pulse != 0.));
+                    } else {
+                        value[channel as usize] += contribution;
+                        transient[channel as usize] += pulse;
+                    }
                 }
             }
         }
@@ -542,16 +648,21 @@ impl Resolver {
 
         let mut previous = std::mem::take(&mut state.0);
         for action in mapping.into_iter().flat_map(|m| &m.actions) {
-            let value = sampled
+            let (value, transient) = sampled
                 .get(action.id.as_str())
-                .map_or(Vec3::ZERO, |(_, value)| *value);
-            let value = match action.axis {
-                ActionAxis::Bool => Vec3::X * f32::from(value != Vec3::ZERO),
-                ActionAxis::Axis1D => Vec3::X * value.x,
-                ActionAxis::Axis2D => value.truncate().extend(0.0),
-                ActionAxis::Axis3D => value,
-            }
-            .clamp(Vec3::NEG_ONE, Vec3::ONE);
+                .map_or((Vec3::ZERO, Vec3::ZERO), |(_, value, transient)| {
+                    (*value, *transient)
+                });
+            let shape = |value: Vec3| {
+                match action.axis {
+                    ActionAxis::Bool | ActionAxis::Axis1D => Vec3::X * value.x,
+                    ActionAxis::Axis2D => value.truncate().extend(0.0),
+                    ActionAxis::Axis3D => value,
+                }
+                .clamp(Vec3::NEG_ONE, Vec3::ONE)
+            };
+            let value = shape(value);
+            let pulsed = value == Vec3::ZERO && shape(transient) != Vec3::ZERO;
             let was_pressed = previous
                 .remove(&action.id)
                 .is_some_and(ActionSample::pressed);
@@ -559,8 +670,8 @@ impl Resolver {
                 action.id.clone(),
                 ActionSample {
                     value,
-                    just_pressed: !was_pressed && value != Vec3::ZERO,
-                    just_released: was_pressed && value == Vec3::ZERO,
+                    just_pressed: !was_pressed && (value != Vec3::ZERO || pulsed),
+                    just_released: (was_pressed || pulsed) && value == Vec3::ZERO,
                 },
             );
         }
@@ -652,7 +763,10 @@ mod tests {
                 ctx,
                 Some(&mapping),
                 &overrides,
-                |source| f32::from(down && source == InputSource::Key(KeyCode::Space)),
+                (
+                    |source| f32::from(down && source == InputSource::Key(KeyCode::Space)),
+                    |_| false,
+                ),
                 0.01,
             )
         };
@@ -695,7 +809,7 @@ mod tests {
                     contexts,
                     Some(&mapping),
                     &overrides,
-                    |_| f32::from(down),
+                    (|_| f32::from(down), |_| false),
                     0.016,
                 )
             };
@@ -711,6 +825,55 @@ mod tests {
         step(&mut resolver, &mut state, &contexts, false);
         step(&mut resolver, &mut state, &contexts, true);
         assert!(state.get("jump").just_pressed);
+    }
+
+    #[test]
+    fn forwarded_quick_press_reaches_both_schedules_without_repeating() {
+        let mapping: InputMappingAsset = ron::from_str(r#"(actions:[(id:"jump",axis:Bool),(id:"tap",axis:Axis3D)],contexts:[
+            (id:"play",priority:0,bindings:[
+                (id:"jump",action:"jump",source:Key(Space)),
+                (id:"tap",action:"tap",source:Key(Space),trigger:Tap(0.1),modifiers:[Invert,Swizzle(Z)])
+            ])])"#).unwrap();
+        let mut app = App::new();
+        let mut assets = Assets::<InputMappingAsset>::default();
+        let handle = assets.add(mapping);
+        app.insert_resource(assets)
+            .insert_resource(ProjectInputMapping(handle))
+            .init_resource::<Time<Real>>()
+            .init_resource::<InputContexts>()
+            .init_resource::<InputOverrides>()
+            .init_resource::<Resolver>()
+            .init_resource::<ActionState>()
+            .init_resource::<FixedActionState>()
+            .init_resource::<ForwardedInput>()
+            .add_systems(PreUpdate, sample_input)
+            .add_systems(FixedUpdate, sample_fixed);
+        let mut input = app.world_mut().resource_mut::<ForwardedInput>();
+        input.keys.press(KeyCode::Space);
+        input.keys.release(KeyCode::Space);
+        app.world_mut().run_schedule(PreUpdate);
+        let actions = app.world().resource::<ActionState>();
+        let jump = actions.get("jump");
+        assert!(jump.just_pressed && jump.just_released && !jump.pressed());
+        assert_eq!(actions.get("tap").value, Vec3::NEG_Z);
+        app.world_mut().run_schedule(PreUpdate);
+        assert!(
+            !app.world()
+                .resource::<ActionState>()
+                .get("jump")
+                .just_pressed
+        );
+        app.world_mut().run_schedule(FixedUpdate);
+        let actions = app.world().resource::<FixedActionState>();
+        assert!(actions.get("jump").just_pressed && actions.get("jump").just_released);
+        assert!(actions.get("tap").just_pressed && actions.get("tap").just_released);
+        app.world_mut().run_schedule(FixedUpdate);
+        assert!(
+            !app.world()
+                .resource::<FixedActionState>()
+                .get("tap")
+                .just_pressed
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]
