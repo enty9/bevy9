@@ -1,3 +1,4 @@
+mod models;
 pub mod project;
 pub mod supervisor;
 
@@ -36,8 +37,12 @@ fn clear_engine_logs(supervisor: State<'_, EngineSupervisor>) {
 async fn start_engine_host(
     app: AppHandle,
     supervisor: State<'_, EngineSupervisor>,
+    models: State<'_, models::Models>,
     project_path: String,
 ) -> Result<EngineHostStatus, String> {
+    if models.has_tabs() && supervisor.status().project_dir.as_deref() != Some(&project_path) {
+        return Err("Save or close the model tabs before switching projects".into());
+    }
     let sup = supervisor.inner().clone();
     tauri::async_runtime::spawn_blocking(move || sup.start(&app, &project_path))
         .await
@@ -68,6 +73,10 @@ async fn restart_engine_host(
 
 /// Boots the Bevy9 Tauri v2 desktop application.
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("DISPLAY").is_some() && std::env::var_os("GDK_BACKEND").is_none() {
+        gdk::set_allowed_backends("x11,wayland");
+    }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -77,6 +86,24 @@ pub fn run() {
             Ok(())
         })
         .manage(EngineSupervisor::new())
+        .manage(models::Models::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.state::<models::Models>().has_tabs()
+            {
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+                api.prevent_close();
+                let window = window.clone();
+                window.dialog().message("Quit the editor and discard unsaved model edits? Cancel to save your model tabs first.")
+                    .title("Open Blender models").buttons(MessageDialogButtons::OkCancel)
+                    .show(move |quit| {
+                        if quit {
+                            window.state::<models::Models>().clear();
+                            let _ = window.close();
+                        }
+                    });
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             list_sample_projects,
             load_project_metadata,
@@ -86,12 +113,20 @@ pub fn run() {
             start_engine_host,
             stop_engine_host,
             restart_engine_host,
+            models::create_model,
+            models::open_model,
+            models::model_layout,
+            models::model_status,
+            models::save_model,
+            models::close_model,
+            models::list_model_tabs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Bevy9 Editor Tauri application");
 
     app.run(|app_handle, event| {
         if let RunEvent::Exit = event {
+            app_handle.state::<models::Models>().clear();
             let supervisor = app_handle.state::<EngineSupervisor>();
             let _ = supervisor.stop(app_handle);
         }
