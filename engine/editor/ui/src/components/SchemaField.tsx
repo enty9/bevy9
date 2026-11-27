@@ -107,6 +107,11 @@ export function NumericInput({
           e.currentTarget.blur();
         }
       }}
+      onWheel={(e) => {
+        if (document.activeElement === e.currentTarget) {
+          e.currentTarget.blur();
+        }
+      }}
     />
   );
 }
@@ -538,7 +543,7 @@ function ColliderField({
         const axes = is3d ? (["X", "Y", "Z"] as const) : (["X", "Y"] as const);
         return (
           <>
-            <div className="prop-row">
+            <div className="prop-row prop-row-stacked">
               <span className="prop-label">Half Extents</span>
               <VectorRow
                 axes={axes}
@@ -631,7 +636,7 @@ function ColliderField({
         const ptB = Array.isArray(pair[1]) ? (pair[1] as number[]) : [32, 0];
         return (
           <>
-            <div className="prop-row">
+            <div className="prop-row prop-row-stacked">
               <span className="prop-label">Point A</span>
               <VectorRow
                 axes={["X", "Y"]}
@@ -640,7 +645,7 @@ function ColliderField({
                 onChange={(nextA) => onChange({ Segment: [nextA, ptB] })}
               />
             </div>
-            <div className="prop-row">
+            <div className="prop-row prop-row-stacked">
               <span className="prop-label">Point B</span>
               <VectorRow
                 axes={["X", "Y"]}
@@ -880,7 +885,7 @@ function ColliderField({
                 onChange={(n) => updateGrid(rows, Math.max(2, Math.round(n)))}
               />
             </div>
-            <div className="prop-row">
+            <div className="prop-row prop-row-stacked">
               <span className="prop-label">Scale</span>
               <VectorRow
                 axes={["X", "Y", "Z"]}
@@ -1112,6 +1117,7 @@ export function SchemaField({
   }
 
   // 4. Vectors & Quat
+  const stackedRowClass = label ? "prop-row prop-row-stacked" : "prop-row prop-row-full";
   const vecDims = isVecType(typePath);
   if (vecDims !== null) {
     const arr = Array.isArray(value) ? (value as number[]) : [];
@@ -1122,7 +1128,7 @@ export function SchemaField({
           ? (["X", "Y", "Z"] as const)
           : (["X", "Y", "Z", "W"] as const);
     return (
-      <div className={propRowClass}>
+      <div className={stackedRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <VectorRow
           axes={axes}
@@ -1135,7 +1141,7 @@ export function SchemaField({
 
   if (typePath === "glam::Quat" || typePath === "bevy_math::quat::Quat") {
     return (
-      <div className={propRowClass}>
+      <div className={stackedRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <QuatEulerEditor value={value} onChange={(q) => onChange(q)} />
       </div>
@@ -1164,15 +1170,17 @@ export function SchemaField({
                 onChange(buildColorValue(info, nextRgba));
               }}
             />
-            <span className="muted" style={{ fontSize: 11 }}>
+            <span className="muted">
               {info.variantName} ({hex.toUpperCase()})
             </span>
           </div>
         </div>
         <div className="rgba-row">
-          {(["red", "green", "blue", "alpha"] as const).map((channel) => (
+          {(["red", "green", "blue", "alpha"] as const).map((channel, idx) => (
             <label key={channel} className="rgba-cell">
-              <span className="muted">{channel[0].toUpperCase()}</span>
+              <span className={`vec-tag ${AXIS_CLASSES[idx]}`}>
+                {channel[0].toUpperCase()}
+              </span>
               <NumericInput
                 value={info.rgba[channel]}
                 step={0.02}

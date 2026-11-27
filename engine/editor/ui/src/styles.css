@@ -20,6 +20,29 @@
 
 * {
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #526588;
+  background-clip: content-box;
 }
 
 html,
@@ -225,12 +248,14 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .metric-pill {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 5px;
-  padding: 3px 8px;
+  padding: 4px 10px;
   white-space: nowrap;
 }
 
@@ -287,6 +312,9 @@ button.ghost-btn:hover:not(:disabled) {
 .dock-pane {
   flex-shrink: 0;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
@@ -368,7 +396,7 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .panel-header {
-  height: 32px;
+  height: 34px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -377,7 +405,7 @@ button.ghost-btn:hover:not(:disabled) {
   padding: 0 10px;
   border-bottom: 1px solid var(--border-subtle);
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
   background: rgba(255, 255, 255, 0.015);
 }
 
@@ -388,9 +416,10 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .panel-body {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
@@ -422,6 +451,7 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .log-row {
+  flex-shrink: 0;
   display: grid;
   grid-template-columns: 52px 150px 1fr;
   gap: 8px;
@@ -536,6 +566,7 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .outliner-row {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -727,17 +758,26 @@ button.ghost-btn:hover:not(:disabled) {
 
 /* Inspector styles */
 .inspector-body {
-  gap: 8px;
+  gap: 10px;
+  padding: 10px 12px 28px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+
+.inspector-body > * {
+  flex-shrink: 0;
 }
 
 .inspector-entity-card {
-  padding: 8px 10px;
+  flex-shrink: 0;
+  padding: 10px 12px;
   border-radius: 6px;
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .inspector-entity-top {
@@ -747,13 +787,21 @@ button.ghost-btn:hover:not(:disabled) {
   gap: 8px;
 }
 
+.inspector-entity-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+
 .inspector-meta {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #9fb0c8;
   word-break: break-all;
 }
 
 .inspector-actions-bar {
   display: flex;
+  flex-shrink: 0;
 }
 
 .add-component-popover {
@@ -775,6 +823,7 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .component-card {
+  flex-shrink: 0;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.015);
@@ -785,11 +834,11 @@ button.ghost-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px;
+  padding: 8px 10px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13.5px;
   font-weight: 600;
 }
 
@@ -804,15 +853,15 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .component-card-body {
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 9px;
 }
 
 .prop-row {
   display: grid;
-  grid-template-columns: 105px 1fr;
+  grid-template-columns: minmax(112px, 38%) 1fr;
   align-items: center;
   gap: 8px;
 }
@@ -821,9 +870,17 @@ button.ghost-btn:hover:not(:disabled) {
   grid-template-columns: 1fr;
 }
 
+.prop-row.prop-row-stacked {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+}
+
 .prop-label {
-  color: var(--text-muted);
-  font-size: 12px;
+  color: #b4bfd4;
+  font-size: 13px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -834,15 +891,42 @@ button.ghost-btn:hover:not(:disabled) {
   min-width: 0;
 }
 
+.inspector-body .text-input,
+.inspector-body .select-input {
+  font-size: 13px;
+  min-height: 32px;
+  padding: 5px 9px;
+}
+
+.inspector-body .seg-btn {
+  font-size: 13px;
+  padding: 6px 10px;
+  flex: 1;
+  justify-content: center;
+}
+
 .num-input {
   width: 100%;
   min-width: 0;
   background: var(--bg-root);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  padding: 3px 6px;
-  font-size: 12px;
+  padding: 5px 8px;
+  min-height: 32px;
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  color: #f4f7fc;
+  -moz-appearance: textfield;
+  appearance: textfield;
   outline: none;
+}
+
+.num-input::-webkit-inner-spin-button,
+.num-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .num-input:focus {
@@ -851,8 +935,8 @@ button.ghost-btn:hover:not(:disabled) {
 
 .vec-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
-  gap: 4px;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+  gap: 6px;
   min-width: 0;
 }
 
@@ -869,16 +953,19 @@ button.ghost-btn:hover:not(:disabled) {
 .vec-cell .num-input {
   border: none;
   border-radius: 0;
-  padding: 3px 4px;
+  padding: 5px 7px;
+  min-height: 32px;
 }
 
 .vec-tag {
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
-  padding: 0 5px;
+  padding: 0 8px;
+  min-width: 24px;
   height: 100%;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   background: var(--bg-surface);
   border-right: 1px solid var(--border-subtle);
 }
@@ -902,14 +989,14 @@ button.ghost-btn:hover:not(:disabled) {
 .transform-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 9px;
 }
 
 .transform-row {
-  display: grid;
-  grid-template-columns: 74px 1fr;
-  align-items: center;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
 }
 
 .transform-footer {
@@ -920,7 +1007,7 @@ button.ghost-btn:hover:not(:disabled) {
 .color-editor-block {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .color-swatch-row {
@@ -930,8 +1017,8 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .color-picker {
-  width: 34px;
-  height: 22px;
+  width: 40px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
@@ -941,21 +1028,37 @@ button.ghost-btn:hover:not(:disabled) {
 
 .rgba-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
 }
 
 .rgba-cell {
   display: flex;
   align-items: center;
-  gap: 4px;
+  min-width: 0;
+  background: var(--bg-root);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.rgba-cell .num-input {
+  border: none;
+  border-radius: 0;
+  padding: 5px 7px;
+  min-height: 32px;
 }
 
 .scalar-control {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
+}
+
+.scalar-control .unit-slider + .num-input {
+  width: 84px;
+  flex-shrink: 0;
 }
 
 .unit-slider {
@@ -974,9 +1077,9 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .nested-struct-title {
-  font-size: 11px;
+  font-size: 12.5px;
   font-weight: 600;
-  color: var(--text-muted);
+  color: #b4bfd4;
 }
 
 .nested-indent {
@@ -990,8 +1093,15 @@ button.ghost-btn:hover:not(:disabled) {
 .option-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  font-size: 13px;
   cursor: pointer;
+}
+
+.option-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent-blue);
 }
 
 .json-preview {
@@ -1022,12 +1132,14 @@ button.ghost-btn:hover:not(:disabled) {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .snap-row input {
   width: 82px;
-  padding: 3px 6px;
+  min-height: 28px;
+  padding: 4px 7px;
+  font-size: 13px;
   background: var(--bg-root);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
@@ -1038,6 +1150,7 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .prefab-banner {
+  flex-shrink: 0;
   background: rgba(61, 158, 245, 0.12);
   border: 1px solid rgba(61, 158, 245, 0.35);
   border-radius: 6px;
@@ -1636,9 +1749,13 @@ button.ghost-btn:hover:not(:disabled) {
 
 .marker-component-note,
 .collider-meta-note {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 2px 0;
+  font-size: 13px;
+  color: #c8d6ea;
+  font-variant-numeric: tabular-nums;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .vertex-list {
@@ -1671,6 +1788,11 @@ button.ghost-btn:hover:not(:disabled) {
   gap: 6px;
 }
 
+.layer-mask-header .cb-mono {
+  font-size: 12px;
+  color: #c8d6ea;
+}
+
 .layer-bit-grid {
   display: grid;
   grid-template-columns: repeat(8, 1fr);
@@ -1678,9 +1800,9 @@ button.ghost-btn:hover:not(:disabled) {
 }
 
 .layer-bit-btn {
-  padding: 2px 0;
+  padding: 4px 0;
   justify-content: center;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   border-radius: 3px;
   background: var(--bg-root);
@@ -1719,7 +1841,7 @@ button.ghost-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -1727,7 +1849,7 @@ button.ghost-btn:hover:not(:disabled) {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -1798,15 +1920,16 @@ button.ghost-btn:hover:not(:disabled) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .gameplay-slider-row {
   display: grid;
-  grid-template-columns: 58px 1fr 56px;
+  grid-template-columns: 64px 1fr 64px;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .gameplay-slider {
@@ -1819,6 +1942,7 @@ button.ghost-btn:hover:not(:disabled) {
 .gameplay-slider-val {
   text-align: right;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-primary);
 }

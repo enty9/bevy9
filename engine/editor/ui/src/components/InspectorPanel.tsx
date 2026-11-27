@@ -478,7 +478,7 @@ export function InspectorPanel({
         <div className="panel-body inspector-body">
           <div className="inspector-entity-card">
             <div className="inspector-entity-top">
-              <strong>{selectedNode.name}</strong>
+              <strong className="inspector-entity-name">{selectedNode.name}</strong>
               <div className="panel-actions">
                 {!prefabRootNode && (
                   <button
@@ -703,11 +703,11 @@ export function InspectorPanel({
                       </div>
                     )}
                     {compErr ? (
-                      <div className="muted" style={{ fontSize: 11 }}>
+                      <div className="muted">
                         Read-only / not BRP-serializable: {compErr}
                       </div>
                     ) : !hasValue ? (
-                      <div className="muted" style={{ fontSize: 11 }}>
+                      <div className="muted">
                         {loading ? "Loading component..." : "No serialized data"}
                       </div>
                     ) : (

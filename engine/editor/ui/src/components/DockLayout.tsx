@@ -1,6 +1,6 @@
 import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
-export const LAYOUT_STORAGE_KEY = "bevy9.editor.layout.v1";
+export const LAYOUT_STORAGE_KEY = "bevy9.editor.layout.v2";
 
 export interface DockLayoutState {
   leftWidth: number;
@@ -13,7 +13,7 @@ export interface DockLayoutState {
 
 export const DEFAULT_LAYOUT_STATE: DockLayoutState = {
   leftWidth: 270,
-  rightWidth: 340,
+  rightWidth: 420,
   bottomHeight: 210,
   leftCollapsed: false,
   rightCollapsed: false,
@@ -38,7 +38,7 @@ export function loadSavedLayout(): DockLayoutState {
           : DEFAULT_LAYOUT_STATE.leftWidth,
       rightWidth:
         typeof parsed.rightWidth === "number"
-          ? clamp(parsed.rightWidth, 220, 580)
+          ? clamp(parsed.rightWidth, 280, 720)
           : DEFAULT_LAYOUT_STATE.rightWidth,
       bottomHeight:
         typeof parsed.bottomHeight === "number"
@@ -128,7 +128,7 @@ export function DockLayout({
       onChange({
         ...layout,
         rightCollapsed: false,
-        rightWidth: clamp(drag.startSize + delta, 220, 580),
+        rightWidth: clamp(drag.startSize + delta, 280, 720),
       });
     } else {
       const delta = drag.startCoord - event.clientY;
