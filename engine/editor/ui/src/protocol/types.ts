@@ -358,6 +358,7 @@ export interface BrpGetComponentsResponse {
 }
 
 export type AssetKind =
+  | "audio"
   | "image"
   | "gltf_model"
   | "prefab"

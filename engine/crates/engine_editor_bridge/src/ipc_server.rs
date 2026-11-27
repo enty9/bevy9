@@ -23,13 +23,15 @@ use bevy_ecs::{
     system::{Query, ResMut},
     world::World,
 };
+use bevy_input::{keyboard::KeyCode, mouse::MouseButton};
 use bevy_time::Time;
 use crossbeam_channel::{bounded, unbounded, Receiver, Sender};
 use engine_assets::AssetRegistry;
 use engine_core::{ProjectManifest, WorldMode};
+use engine_input::ForwardedInput;
 use engine_protocol::{
     encode_viewport_frame, ClientIpcMessage, FrameMetrics, GizmoMode, GizmoSnapConfig,
-    GizmoSpace, ServerIpcMessage, ViewportCameraMode, ViewportMode, PROTOCOL_VERSION,
+    GizmoSpace, PointerButtonCode, ServerIpcMessage, ViewportCameraMode, ViewportInputEvent, ViewportMode, PROTOCOL_VERSION,
 };
 use engine_render::{
     gizmo::TransformGizmoState, ViewportConfig, ViewportFrameChannel, ViewportFramePacket,
@@ -366,6 +368,10 @@ pub(crate) fn process_ipc_inbound(world: &mut World) {
                 send_hello_snapshot(world, client_id, protocol_version);
             }
             ClientIpcMessage::ViewportInput { event } => {
+                if world.get_resource::<ViewportConfig>().is_some_and(|cfg| cfg.mode == ViewportMode::Offscreen)
+                    && let Some(mut input) = world.get_resource_mut::<ForwardedInput>() {
+                    update_forwarded_input(&mut input, &event);
+                }
                 if let Some(mut queue) = world.get_resource_mut::<ViewportInputQueue>() {
                     queue.push(event);
                 }
@@ -427,6 +433,31 @@ pub(crate) fn process_ipc_inbound(world: &mut World) {
             }
         }
     }
+    if (world.resource::<EditorIpcServer>().client_count() == 0
+        || world.get_resource::<ViewportConfig>().is_some_and(|cfg| cfg.mode != ViewportMode::Offscreen))
+        && let Some(mut input) = world.get_resource_mut::<ForwardedInput>()
+    {
+        *input = ForwardedInput::default();
+    }
+}
+
+fn update_forwarded_input(input: &mut ForwardedInput, event: &ViewportInputEvent) {
+    match event {
+        ViewportInputEvent::Key { code, pressed, .. } => {
+            let code = match code.as_str() { "MetaLeft" => "SuperLeft", "MetaRight" => "SuperRight", other => other };
+            if let Ok(code) = serde_json::from_value::<KeyCode>(serde_json::Value::String(code.into())) {
+                if *pressed { input.keys.press(code); } else { input.keys.release(code); }
+            }
+        }
+        ViewportInputEvent::PointerButton { button, pressed, .. } => {
+            let button = match button { PointerButtonCode::Left => MouseButton::Left, PointerButtonCode::Middle => MouseButton::Middle, PointerButtonCode::Right => MouseButton::Right };
+            if *pressed { input.mouse.press(button); } else { input.mouse.release(button); }
+        }
+        ViewportInputEvent::FocusChanged { focused: false } => *input = ForwardedInput::default(),
+        _ => {}
+    }
+    input.keys.clear();
+    input.mouse.clear();
 }
 
 fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_version: u32) {

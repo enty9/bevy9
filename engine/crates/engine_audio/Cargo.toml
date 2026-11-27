@@ -1,0 +1,25 @@
+[package]
+name = "engine_audio"
+description = "Kira-backed audio mixer for Bevy9"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+bevy_reflect.workspace = true
+bevy_transform.workspace = true
+engine_assets.workspace = true
+engine_core.workspace = true
+engine_protocol.workspace = true
+kira.workspace = true
+mint = "0.5"
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

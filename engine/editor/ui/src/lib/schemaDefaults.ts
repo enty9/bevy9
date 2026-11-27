@@ -128,6 +128,73 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     range: 20.0,
     shadows_enabled: false,
   },
+  "engine_audio::AudioEmitter": {
+    clip: null,
+    bus: "Sfx",
+    space: "Global",
+    autoplay: false,
+    looping: false,
+    streaming: false,
+    gain: 1.0,
+    gain_variation: 0.0,
+    pitch: 1.0,
+    pitch_variation: 0.0,
+    min_distance: 1.0,
+    max_distance: 100.0,
+  },
+  "engine_audio::AudioListener": {
+    enabled: true,
+    priority: 0,
+  },
+  "engine_physics::RigidBody2D": {
+    kind: "Dynamic",
+    velocity: [0, 0],
+    gravity_scale: 1.0,
+    ccd: false,
+  },
+  "engine_physics::RigidBody3D": {
+    kind: "Dynamic",
+    velocity: [0, 0, 0],
+    gravity_scale: 1.0,
+    ccd: false,
+  },
+  "engine_physics::Collider2D": {
+    Cuboid: [16.0, 16.0],
+  },
+  "engine_physics::Collider3D": {
+    Cuboid: [0.5, 0.5, 0.5],
+  },
+  "engine_physics::PhysicsMaterial": {
+    friction: 0.5,
+    restitution: 0.0,
+    density: 1.0,
+  },
+  "engine_physics::CollisionLayers": {
+    memberships: 4294967295,
+    filter: 4294967295,
+  },
+  "engine_physics::CharacterController2D": {
+    platformer: true,
+    slope_degrees: 45.0,
+    ground_snap: 2.0,
+  },
+  "engine_physics::CharacterController3D": {
+    slope_degrees: 45.0,
+    step_height: 0.3,
+    ground_snap: 0.15,
+  },
+  "engine_physics::PhysicsJoint2D": {
+    target: null,
+    kind: "Fixed",
+    anchor: [0, 0],
+    target_anchor: [0, 0],
+  },
+  "engine_physics::PhysicsJoint3D": {
+    target: null,
+    kind: "Fixed",
+    anchor: [0, 0, 0],
+    target_anchor: [0, 0, 0],
+  },
   "bevy_color::color::Color": {
     Srgba: { red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0 },
   },

@@ -96,6 +96,11 @@ pub fn infer_asset_kind(path: &Path) -> AssetKind {
         AssetKind::Material
     } else if lower.ends_with(".rhai") {
         AssetKind::Script
+    } else if [".wav", ".ogg", ".mp3", ".flac"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
+    {
+        AssetKind::Audio
     } else if lower.ends_with(".glb") || lower.ends_with(".gltf") {
         AssetKind::GltfModel
     } else if lower.ends_with(".png")

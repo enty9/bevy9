@@ -5,6 +5,20 @@
     world: (
         resources: {},
         entities: {
+            4294967253: (
+                components: {
+                    "bevy_ecs::name::Name": "Trigger zone",
+                    "bevy_transform::components::transform::Transform": (
+                        translation: (1.1, 1.25, 0.2),
+                        rotation: (0.0, 0.0, 0.0, 1.0),
+                        scale: (1.0, 1.0, 1.0),
+                    ),
+                    "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000008"),
+                    "engine_scene::components::SceneEntity": (),
+                    "engine_physics::Collider3D": Cuboid((0.9, 0.15, 0.9)),
+                    "engine_physics::TriggerVolume3D": (),
+                },
+            ),
             4294967254: (
                 components: {
                     "bevy_camera::visibility::Visibility": Inherited,
@@ -15,6 +29,7 @@
                         scale: (1.0, 1.0, 1.0),
                     ),
                     "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000007"),
+                    "engine_audio::AudioListener": (enabled: true, priority: 0),
                     "engine_scene::components::SceneCamera3d": (
                         fov_degrees: 45.0,
                         active: true,
@@ -28,7 +43,7 @@
                     "bevy_ecs::hierarchy::ChildOf": (4294967257),
                     "bevy_ecs::name::Name": "AccentSphere",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (1.1, 0.65, 0.2),
+                        translation: (1.1, 2.6, 0.2),
                         rotation: (0.0, 0.0, 0.0, 1.0),
                         scale: (1.0, 1.0, 1.0),
                     ),
@@ -36,6 +51,9 @@
                     "engine_scene::components::MeshPrimitive3d": Sphere(
                         radius: 0.65,
                     ),
+                    "engine_physics::RigidBody3D": (kind: Dynamic, velocity: (0.0, 0.0, 0.0), gravity_scale: 1.0, ccd: true),
+                    "engine_physics::Collider3D": Ball(0.65),
+                    "engine_physics::PhysicsMaterial": (friction: 0.45, restitution: 0.8, density: 1.0),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((
@@ -61,7 +79,7 @@
                     "bevy_ecs::hierarchy::ChildOf": (4294967257),
                     "bevy_ecs::name::Name": "HeroCube",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (-0.9, 0.6, 0.0),
+                        translation: (-0.9, 1.5, 0.0),
                         rotation: (0.0, 0.0, 0.0, 1.0),
                         scale: (1.0, 1.0, 1.0),
                     ),
@@ -69,6 +87,8 @@
                     "engine_scene::components::MeshPrimitive3d": Cube(
                         size: (1.2, 1.2, 1.2),
                     ),
+                    "engine_physics::RigidBody3D": (kind: Dynamic, velocity: (0.0, 0.0, 0.0), gravity_scale: 1.0, ccd: true),
+                    "engine_physics::Collider3D": Cuboid((0.6, 0.6, 0.6)),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((
@@ -161,6 +181,7 @@
                     "engine_scene::components::MeshPrimitive3d": Plane(
                         size: (12.0, 12.0),
                     ),
+                    "engine_physics::Collider3D": Cuboid((6.0, 0.03, 6.0)),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((

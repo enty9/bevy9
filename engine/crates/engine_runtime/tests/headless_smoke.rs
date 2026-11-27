@@ -6,6 +6,7 @@ use std::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use bevy::{
@@ -13,9 +14,11 @@ use bevy::{
     diagnostic::FrameCount,
     ecs::schedule::IntoScheduleConfigs,
     ecs::system::Res,
+    time::TimeUpdateStrategy,
+    transform::components::Transform,
 };
 use clap::Parser;
-use engine_core::{EntityGuidMap, ProjectManifest, ProjectPaths, WorldMode};
+use engine_core::{EntityGuid, EntityGuidMap, ProjectManifest, ProjectPaths, WorldMode};
 use engine_editor_bridge::{DEFAULT_BRP_PORT, DEFAULT_IPC_PORT};
 use engine_runtime::{build_app_with_options, RuntimeCli, RuntimeMode, RuntimeOptions};
 use engine_scene::ActiveScene;
@@ -77,6 +80,7 @@ fn headless_empty_project_runs_and_exits() {
         mode: RuntimeMode::Window,
         headless: true,
         max_frames: Some(5),
+        physics_debug: false,
         title: None,
         world_mode: None,
         brp_port: DEFAULT_BRP_PORT,
@@ -124,9 +128,21 @@ fn headless_empty_project_runs_and_exits() {
 
 #[test]
 fn headless_sandbox_3d_and_2d_load_startup_scenes() {
-    for (dir_name, expected_scene_name, expected_mode, expected_entities) in [
-        ("sandbox_3d", "Sandbox 3D", WorldMode::Mode3D, 7),
-        ("sandbox_2d", "Sandbox 2D", WorldMode::Mode2D, 5),
+    for (dir_name, expected_scene_name, expected_mode, expected_entities, ball_guid) in [
+        (
+            "sandbox_3d",
+            "Sandbox 3D",
+            WorldMode::Mode3D,
+            8,
+            "10000000-0000-4000-8000-000000000006",
+        ),
+        (
+            "sandbox_2d",
+            "Sandbox 2D",
+            WorldMode::Mode2D,
+            7,
+            "20000000-0000-4000-8000-000000000004",
+        ),
     ] {
         let project_dir = sample_project_dir(dir_name);
         let cli = RuntimeCli {
@@ -134,7 +150,8 @@ fn headless_sandbox_3d_and_2d_load_startup_scenes() {
             scene: None,
             mode: RuntimeMode::Headless,
             headless: true,
-            max_frames: Some(5),
+            max_frames: Some(20),
+            physics_debug: false,
             title: None,
             world_mode: None,
             brp_port: DEFAULT_BRP_PORT,
@@ -157,6 +174,19 @@ fn headless_sandbox_3d_and_2d_load_startup_scenes() {
             assert_eq!(world.resource::<EntityGuidMap>().len(), expected_entities);
         }
 
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1. / 60.,
+        )));
+        let ball = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str(ball_guid).unwrap())
+            .unwrap();
+        let initial_y = app.world().get::<Transform>(ball).unwrap().translation.y;
+        for _ in 0..12 {
+            app.update();
+        }
+        assert!(app.world().get::<Transform>(ball).unwrap().translation.y < initial_y);
         let exit = app.run();
         assert_eq!(exit, AppExit::Success);
     }

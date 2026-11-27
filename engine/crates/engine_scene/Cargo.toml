@@ -11,7 +11,9 @@ workspace = true
 
 [dependencies]
 engine_assets = { workspace = true }
+engine_audio = { workspace = true }
 engine_core = { workspace = true }
+engine_physics = { workspace = true }
 engine_protocol = { workspace = true }
 bevy_app = { workspace = true }
 bevy_asset = { workspace = true }

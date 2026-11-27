@@ -215,7 +215,7 @@ export async function pickImportAssetFiles(): Promise<string[]> {
     filters: [
       {
         name: "Supported Assets",
-        extensions: ["png", "bmp", "tga", "glb", "gltf", "ron", "rhai"],
+        extensions: ["png", "bmp", "tga", "glb", "gltf", "ron", "rhai", "wav", "ogg", "mp3", "flac"],
       },
     ],
   });

@@ -247,6 +247,9 @@ function inferAssetKindFilter(
   if (parentTypePath?.includes("SceneGltfModel")) {
     return "gltf_model";
   }
+  if (parentTypePath?.includes("AudioEmitter") && fieldLabel === "clip") {
+    return "audio";
+  }
   if (parentTypePath?.includes("SceneTilemap")) {
     return "tilemap";
   }

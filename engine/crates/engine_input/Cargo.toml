@@ -1,0 +1,25 @@
+[package]
+name = "engine_input"
+description = "Contextual input actions for Bevy9"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+bevy_asset.workspace = true
+bevy_ecs.workspace = true
+bevy_input = { workspace = true, features = ["gamepad", "keyboard", "mouse"] }
+bevy_math.workspace = true
+bevy_reflect.workspace = true
+bevy_settings.workspace = true
+bevy_time.workspace = true
+engine_core.workspace = true
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

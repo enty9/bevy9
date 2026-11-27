@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   LayoutGrid,
   List,
+  Music2,
   Package,
   RefreshCw,
   Search,
@@ -57,6 +58,7 @@ const KIND_FILTERS: Array<{ id: AssetKind | "all"; label: string }> = [
   { id: "prefab", label: "Prefabs" },
   { id: "scene", label: "Scenes" },
   { id: "script", label: "Scripts" },
+  { id: "audio", label: "Audio" },
 ];
 
 function formatBytes(bytes: number): string {
@@ -90,6 +92,8 @@ function renderKindIcon(kind: AssetKind, size = 18) {
       return <Code2 size={size} className="cb-kind-icon kind-script" />;
     case "material":
       return <Sparkles size={size} className="cb-kind-icon kind-material" />;
+    case "audio":
+      return <Music2 size={size} className="cb-kind-icon" />;
     case "unknown":
       return <Box size={size} className="cb-kind-icon" />;
   }
@@ -111,6 +115,8 @@ function kindShortLabel(kind: AssetKind): string {
       return "SCRIPT";
     case "material":
       return "MAT";
+    case "audio":
+      return "AUDIO";
     case "unknown":
       return "FILE";
   }
@@ -150,6 +156,19 @@ export function ContentBrowserPanel({
       snapshot?.assets.find((asset) => asset.uuid === selectedUuid) ?? null,
     [snapshot, selectedUuid],
   );
+
+  async function previewAudio(uuid: string | null) {
+    if (!brpClient) return;
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      await brpClient.call("engine.audio.preview", { uuid });
+    } catch (error) {
+      setActionError(String(error));
+    } finally {
+      setBusyAction(false);
+    }
+  }
 
   // Sync details editor drafts when selecting a different asset or updated revision.
   useEffect(() => {
@@ -651,7 +670,7 @@ export function ContentBrowserPanel({
 
         {/* Right asset details & import settings */}
         {selectedAsset && (
-          <div className="cb-details">
+        <div className="cb-details">
             <div className="cb-details-header">
               <div className="cb-details-title">
                 {renderKindIcon(selectedAsset.kind, 15)}
@@ -668,6 +687,13 @@ export function ContentBrowserPanel({
                 Delete
               </button>
             </div>
+
+            {selectedAsset.kind === "audio" && (
+              <div className="cb-inline-bar compact">
+                <button type="button" disabled={busyAction} onClick={() => void previewAudio(selectedAsset.uuid)}>Play preview</button>
+                <button type="button" disabled={busyAction} onClick={() => void previewAudio(null)}>Stop</button>
+              </div>
+            )}
 
             {blockedDependents && (
               <div className="cb-delete-warning">

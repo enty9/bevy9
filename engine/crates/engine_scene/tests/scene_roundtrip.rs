@@ -17,9 +17,16 @@ use bevy_pbr::{MeshMaterial3d, StandardMaterial};
 use bevy_sprite::Sprite;
 use bevy_sprite_render::{ColorMaterial, MeshMaterial2d};
 use bevy_transform::components::Transform;
-use engine_core::{EngineCorePlugin, EntityGuid, EntityGuidMap, WorldMode};
+use engine_audio::{AudioEmitter, AudioListener, AudioSpace};
+use engine_core::{AssetUuid, EngineCorePlugin, EntityGuid, EntityGuidMap, WorldMode};
+use engine_physics::{
+    BodyKind, CharacterController2D, CharacterController3D, Collider2D, Collider3D,
+    CollisionLayers, PhysicsJoint2D, PhysicsJoint3D, PhysicsMaterial, RigidBody2D, RigidBody3D,
+    TriggerVolume3D,
+};
 use engine_protocol::EntityPresetKind;
 use engine_scene::prelude::*;
+use serde_json::json;
 
 fn setup_scene_app(mode: WorldMode, allow_scene_cameras: bool) -> App {
     let mut app = App::new();
@@ -314,7 +321,7 @@ fn sample_sandbox_scenes_load_cleanly() {
             .find(|node| node.name == "ShowcaseGroup")
             .expect("ShowcaseGroup present in sandbox_3d");
         assert_eq!(showcase.children.len(), 2);
-        assert_eq!(app.world().resource::<EntityGuidMap>().len(), 7);
+        assert_eq!(app.world().resource::<EntityGuidMap>().len(), 8);
 
         let world = app.world_mut();
         assert_eq!(world.query::<&Mesh3d>().iter(world).count(), 3);
@@ -338,11 +345,251 @@ fn sample_sandbox_scenes_load_cleanly() {
             .find(|node| node.name == "HeroGroup")
             .expect("HeroGroup present in sandbox_2d");
         assert_eq!(hero_group.children.len(), 2);
-        assert_eq!(app.world().resource::<EntityGuidMap>().len(), 5);
+        assert_eq!(app.world().resource::<EntityGuidMap>().len(), 7);
 
         let world = app.world_mut();
-        assert_eq!(world.query::<&Mesh2d>().iter(world).count(), 2);
+        assert_eq!(world.query::<&Mesh2d>().iter(world).count(), 3);
+        assert_eq!(
+            world
+                .query::<&MeshMaterial2d<ColorMaterial>>()
+                .iter(world)
+                .count(),
+            3
+        );
         assert_eq!(world.query::<&Sprite>().iter(world).count(), 1);
         assert_eq!(world.query::<&Camera2d>().iter(world).count(), 1);
     }
+}
+
+#[test]
+fn stage_five_descriptors_round_trip_with_stable_scene_and_asset_references() {
+    let mut app = setup_scene_app(WorldMode::Mode3D, true);
+    let anchor = EntityGuid::new();
+    let moving = EntityGuid::new();
+    let clip = AssetUuid::new();
+    let emitter = AudioEmitter {
+        clip: Some(clip),
+        space: AudioSpace::Scene3D,
+        streaming: true,
+        ..Default::default()
+    };
+    let world = app.world_mut();
+    world.spawn((
+        SceneEntity,
+        anchor,
+        Transform::IDENTITY,
+        AudioListener::default(),
+    ));
+    world.spawn((
+        SceneEntity,
+        moving,
+        RigidBody3D {
+            kind: BodyKind::Kinematic,
+            ..Default::default()
+        },
+        Collider3D::Ball(1.2),
+        TriggerVolume3D,
+        PhysicsJoint3D {
+            target: Some(anchor),
+            ..Default::default()
+        },
+        emitter.clone(),
+    ));
+    let meta = LevelMetadata {
+        name: "Gameplay descriptors".into(),
+        world_mode: WorldMode::Mode3D,
+    };
+    let serialized = save_level_to_string(world, &meta).unwrap();
+    assert_eq!(load_level_from_str(world, &serialized).unwrap(), meta);
+    let moving = world
+        .resource::<EntityGuidMap>()
+        .get_entity(moving)
+        .unwrap();
+    assert_eq!(world.get::<AudioEmitter>(moving), Some(&emitter));
+    assert_eq!(
+        world.get::<Collider3D>(moving),
+        Some(&Collider3D::Ball(1.2))
+    );
+    assert_eq!(
+        world.get::<PhysicsJoint3D>(moving).unwrap().target,
+        Some(anchor)
+    );
+    assert!(world.get::<TriggerVolume3D>(moving).is_some());
+}
+
+#[test]
+fn stage_five_inspector_default_json_payloads_deserialize_to_defaults() {
+    let mut app = setup_scene_app(WorldMode::Hybrid, true);
+    let entity = app.world_mut().spawn((SceneEntity, EntityGuid::new())).id();
+
+    let payloads = [
+        (
+            "engine_audio::AudioEmitter",
+            json!({
+                "clip": null,
+                "bus": "Sfx",
+                "space": "Global",
+                "autoplay": false,
+                "looping": false,
+                "streaming": false,
+                "gain": 1.0,
+                "gain_variation": 0.0,
+                "pitch": 1.0,
+                "pitch_variation": 0.0,
+                "min_distance": 1.0,
+                "max_distance": 100.0
+            }),
+        ),
+        (
+            "engine_audio::AudioListener",
+            json!({
+                "enabled": true,
+                "priority": 0
+            }),
+        ),
+        (
+            "engine_physics::RigidBody2D",
+            json!({
+                "kind": "Dynamic",
+                "velocity": [0.0, 0.0],
+                "gravity_scale": 1.0,
+                "ccd": false
+            }),
+        ),
+        (
+            "engine_physics::RigidBody3D",
+            json!({
+                "kind": "Dynamic",
+                "velocity": [0.0, 0.0, 0.0],
+                "gravity_scale": 1.0,
+                "ccd": false
+            }),
+        ),
+        (
+            "engine_physics::Collider2D",
+            json!({
+                "Cuboid": [16.0, 16.0]
+            }),
+        ),
+        (
+            "engine_physics::Collider3D",
+            json!({
+                "Cuboid": [0.5, 0.5, 0.5]
+            }),
+        ),
+        (
+            "engine_physics::PhysicsMaterial",
+            json!({
+                "friction": 0.5,
+                "restitution": 0.0,
+                "density": 1.0
+            }),
+        ),
+        (
+            "engine_physics::CollisionLayers",
+            json!({
+                "memberships": 4_294_967_295_u32,
+                "filter": 4_294_967_295_u32
+            }),
+        ),
+        (
+            "engine_physics::CharacterController2D",
+            json!({
+                "platformer": true,
+                "slope_degrees": 45.0,
+                "ground_snap": 2.0
+            }),
+        ),
+        (
+            "engine_physics::CharacterController3D",
+            json!({
+                "slope_degrees": 45.0,
+                "step_height": 0.3,
+                "ground_snap": 0.15
+            }),
+        ),
+        (
+            "engine_physics::PhysicsJoint2D",
+            json!({
+                "target": null,
+                "kind": "Fixed",
+                "anchor": [0.0, 0.0],
+                "target_anchor": [0.0, 0.0]
+            }),
+        ),
+        (
+            "engine_physics::PhysicsJoint3D",
+            json!({
+                "target": null,
+                "kind": "Fixed",
+                "anchor": [0.0, 0.0, 0.0],
+                "target_anchor": [0.0, 0.0, 0.0]
+            }),
+        ),
+    ];
+
+    for (type_path, value) in &payloads {
+        write_reflected_component_json(app.world_mut(), entity, type_path, value)
+            .unwrap_or_else(|err| panic!("failed to write default payload for {type_path}: {err}"));
+    }
+
+    let world = app.world();
+    assert_eq!(
+        world.get::<AudioEmitter>(entity),
+        Some(&AudioEmitter::default())
+    );
+    let listener = world.get::<AudioListener>(entity).expect("AudioListener");
+    let listener_def = AudioListener::default();
+    assert_eq!(listener.enabled, listener_def.enabled);
+    assert_eq!(listener.priority, listener_def.priority);
+
+    assert_eq!(
+        world.get::<RigidBody2D>(entity),
+        Some(&RigidBody2D::default())
+    );
+    assert_eq!(
+        world.get::<RigidBody3D>(entity),
+        Some(&RigidBody3D::default())
+    );
+    assert_eq!(
+        world.get::<Collider2D>(entity),
+        Some(&Collider2D::default())
+    );
+    assert_eq!(
+        world.get::<Collider3D>(entity),
+        Some(&Collider3D::default())
+    );
+    assert_eq!(
+        world.get::<PhysicsMaterial>(entity),
+        Some(&PhysicsMaterial::default())
+    );
+    assert_eq!(
+        world.get::<CollisionLayers>(entity),
+        Some(&CollisionLayers::default())
+    );
+
+    let ctrl2 = world
+        .get::<CharacterController2D>(entity)
+        .expect("CharacterController2D");
+    let ctrl2_def = CharacterController2D::default();
+    assert_eq!(ctrl2.platformer, ctrl2_def.platformer);
+    assert_eq!(ctrl2.slope_degrees.to_bits(), ctrl2_def.slope_degrees.to_bits());
+    assert_eq!(ctrl2.ground_snap.to_bits(), ctrl2_def.ground_snap.to_bits());
+
+    let ctrl3 = world
+        .get::<CharacterController3D>(entity)
+        .expect("CharacterController3D");
+    let ctrl3_def = CharacterController3D::default();
+    assert_eq!(ctrl3.slope_degrees.to_bits(), ctrl3_def.slope_degrees.to_bits());
+    assert_eq!(ctrl3.step_height.to_bits(), ctrl3_def.step_height.to_bits());
+    assert_eq!(ctrl3.ground_snap.to_bits(), ctrl3_def.ground_snap.to_bits());
+
+    assert_eq!(
+        world.get::<PhysicsJoint2D>(entity),
+        Some(&PhysicsJoint2D::default())
+    );
+    assert_eq!(
+        world.get::<PhysicsJoint3D>(entity),
+        Some(&PhysicsJoint3D::default())
+    );
 }

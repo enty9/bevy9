@@ -4,6 +4,9 @@ members = [
   "crates/engine_core",
   "crates/engine_protocol",
   "crates/engine_assets",
+  "crates/engine_input",
+  "crates/engine_physics",
+  "crates/engine_audio",
   "crates/engine_render",
   "crates/engine_scene",
   "crates/engine_editor_bridge",
@@ -33,6 +36,9 @@ semicolon_if_nothing_returned = "warn"
 engine_core = { path = "crates/engine_core" }
 engine_protocol = { path = "crates/engine_protocol" }
 engine_assets = { path = "crates/engine_assets" }
+engine_input = { path = "crates/engine_input" }
+engine_physics = { path = "crates/engine_physics" }
+engine_audio = { path = "crates/engine_audio" }
 engine_render = { path = "crates/engine_render" }
 engine_scene = { path = "crates/engine_scene" }
 engine_editor_bridge = { path = "crates/engine_editor_bridge" }
@@ -48,7 +54,7 @@ bevy_ecs = { path = "../crates/bevy_ecs", features = ["serialize"] }
 bevy_gizmos = { path = "../crates/bevy_gizmos" }
 bevy_gltf = { path = "../crates/bevy_gltf" }
 bevy_image = { path = "../crates/bevy_image", features = ["png", "bmp", "tga"] }
-bevy_input = { path = "../crates/bevy_input" }
+bevy_input = { path = "../crates/bevy_input", features = ["serialize"] }
 bevy_light = { path = "../crates/bevy_light" }
 bevy_log = { path = "../crates/bevy_log" }
 bevy_math = { path = "../crates/bevy_math", features = ["serialize"] }
@@ -58,7 +64,7 @@ bevy_picking = { path = "../crates/bevy_picking", features = ["mesh_picking"] }
 bevy_reflect = { path = "../crates/bevy_reflect", features = ["uuid"] }
 bevy_remote = { path = "../crates/bevy_remote" }
 bevy_render = { path = "../crates/bevy_render" }
-bevy_settings = { path = "../crates/bevy_settings" }
+bevy_settings = { package = "bevy-settings", path = "../crates/bevy_settings" }
 bevy_shape = { path = "../crates/bevy_shape", features = ["serialize"] }
 bevy_sprite = { path = "../crates/bevy_sprite", features = ["bevy_picking"] }
 bevy_sprite_render = { path = "../crates/bevy_sprite_render" }
@@ -76,7 +82,10 @@ crossbeam-channel = "0.5"
 futures-lite = "2.6"
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 image = { version = "0.25", default-features = false, features = ["png", "bmp", "tga"] }
+kira = "=0.12.1" # CPAL 0.17 matches this Bevy revision's ALSA dependency.
 notify = "8.2"
+rapier2d = { version = "0.30", features = ["enhanced-determinism", "debug-render"] }
+rapier3d = { version = "0.30", features = ["enhanced-determinism", "debug-render"] }
 ron = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

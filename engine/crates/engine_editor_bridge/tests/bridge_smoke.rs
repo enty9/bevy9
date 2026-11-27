@@ -368,7 +368,7 @@ fn brp_custom_methods_and_ws_ipc_roundtrip() {
         ),
     );
     assert_eq!(save_res.name, "Saved Bridge Scene");
-    assert_eq!(save_res.entity_count, 8);
+    assert_eq!(save_res.entity_count, 9);
 
     let (_, new_res): (String, SceneOperationResult) = call_brp_while_pumping(
         &mut app,
@@ -400,7 +400,7 @@ fn brp_custom_methods_and_ws_ipc_roundtrip() {
         ),
     );
     assert_eq!(load_res.name, "Saved Bridge Scene");
-    assert_eq!(load_res.entity_count, 8);
+    assert_eq!(load_res.entity_count, 9);
     assert_eq!(
         app.world().resource::<ViewportConfig>().camera_mode,
         ViewportCameraMode::Mode3D

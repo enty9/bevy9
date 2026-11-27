@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import type { EngineHostStatus, ProjectSummary } from "../lib/tauriBridge";
 import type { IpcConnectionState } from "../protocol/ipcClient";
+import type { BrpClient } from "../protocol/brpClient";
+import { GameplayControls } from "./GameplayControls";
 import type {
   FrameMetrics,
   HistoryStatePayload,
@@ -20,6 +22,8 @@ import type {
 } from "../protocol/types";
 
 interface ToolbarProps {
+  brpClient: BrpClient | null;
+  projectKey: string;
   samples: ProjectSummary[];
   activeProject: ProjectSummary | null;
   hostStatus: EngineHostStatus;
@@ -45,6 +49,8 @@ interface ToolbarProps {
 }
 
 export function Toolbar({
+  brpClient,
+  projectKey,
   samples,
   activeProject,
   hostStatus,
@@ -288,6 +294,9 @@ export function Toolbar({
 
         <div className="toolbar-divider" />
 
+        {hostRunning && brpClient && (
+          <GameplayControls key={projectKey} client={brpClient} />
+        )}
         <span className={`badge ${connectionClass}`}>{connectionLabel}</span>
         <span className="metric-pill" title="Viewport FPS / Scene entities">
           {metrics.fps > 0 ? `${metrics.fps.toFixed(0)} FPS` : "-- FPS"} ·{" "}

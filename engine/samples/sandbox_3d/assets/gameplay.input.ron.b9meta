@@ -1,0 +1,11 @@
+(
+    schema_version: 1,
+    uuid: ("894575b4-6d78-45c1-98aa-6e2c65c90e28"),
+    kind: unknown,
+    source_hash: "59706d8b982637bb567ba0b76553297d9f252a3c6c3104a19e0e693bd00a8c50",
+    tags: [],
+    dependencies: [],
+    import_settings: (
+        kind: "generic",
+    ),
+)

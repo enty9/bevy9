@@ -77,6 +77,9 @@ pub struct ProjectMetadata {
     /// Relative path to the scripts directory.
     #[serde(default = "default_scripts_dir")]
     pub scripts_dir: String,
+    /// Optional path to a `.input.ron` mapping relative to the assets directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_mapping: Option<String>,
 }
 
 impl Default for ProjectMetadata {
@@ -90,6 +93,7 @@ impl Default for ProjectMetadata {
             assets_dir: default_assets_dir(),
             scenes_dir: default_scenes_dir(),
             scripts_dir: default_scripts_dir(),
+            input_mapping: None,
         }
     }
 }
@@ -202,6 +206,14 @@ impl ProjectManifest {
         validate_relative_path("project.scenes_dir", &self.project.scenes_dir)?;
         validate_relative_path("project.scripts_dir", &self.project.scripts_dir)?;
         validate_relative_path("project.startup_scene", &self.project.startup_scene)?;
+        if let Some(mapping) = &self.project.input_mapping {
+            validate_relative_path("project.input_mapping", mapping)?;
+            if !mapping.ends_with(".input.ron") || mapping.contains([':', '#']) {
+                return Err(ProjectManifestError::Validation(
+                    "project.input_mapping must be a relative .input.ron path without a source or label".into(),
+                ));
+            }
+        }
 
         if self.window.width == 0 || self.window.height == 0 {
             return Err(ProjectManifestError::Validation(

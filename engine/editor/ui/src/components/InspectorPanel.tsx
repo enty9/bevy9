@@ -279,7 +279,8 @@ export function InspectorPanel({
       .map(([typePath, def]) => ({
         typePath,
         shortPath: def.shortPath ?? shortComponentName(typePath, registrySchema),
-        isEngineScene: typePath.startsWith("engine_scene::components::"),
+        isEngineScene: typePath.startsWith("engine_scene::components::") ||
+          typePath.startsWith("engine_physics::") || typePath.startsWith("engine_audio::"),
       }));
 
     items.sort((a, b) => {
@@ -290,6 +291,17 @@ export function InspectorPanel({
     });
     return items.slice(0, 60);
   }, [registrySchema, selectedNode, addSearch]);
+
+  async function previewEmitter(guid: string | null) {
+    if (!brpClient) return;
+    setErrorBanner(null);
+    try {
+      if (guid) await brpClient.call("engine.audio.preview_emitter", { guid });
+      else await brpClient.call("engine.audio.preview", { uuid: null });
+    } catch (error) {
+      setErrorBanner(String(error));
+    }
+  }
 
   function handleFieldMutate(
     typePath: string,
@@ -654,6 +666,12 @@ export function InspectorPanel({
 
                 {!collapsed && (
                   <div className="component-card-body">
+                    {typePath === "engine_audio::AudioEmitter" && brpClient && (
+                      <div className="panel-actions">
+                        <button type="button" onClick={() => void previewEmitter(selectedNode.guid)}>Preview emitter</button>
+                        <button type="button" onClick={() => void previewEmitter(null)}>Stop</button>
+                      </div>
+                    )}
                     {compErr ? (
                       <div className="muted" style={{ fontSize: 11 }}>
                         Read-only / not BRP-serializable: {compErr}

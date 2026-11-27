@@ -45,7 +45,13 @@ use bevy_ecs::{
     schedule::{IntoScheduleConfigs, SystemSet},
 };
 use bevy_transform::components::Transform;
+use engine_audio::{AudioEmitter, AudioListener};
 use engine_core::{schedule::EngineSet, AssetUuid, EntityGuid, WorldMode};
+use engine_physics::{
+    CharacterController2D, CharacterController3D, Collider2D, Collider3D, CollisionLayers,
+    OneWayPlatform2D, PhysicsJoint2D, PhysicsJoint3D, PhysicsMaterial, RigidBody2D, RigidBody3D,
+    TriggerVolume2D, TriggerVolume3D,
+};
 
 pub use prelude::*;
 
@@ -90,6 +96,8 @@ impl Plugin for EngineScenePlugin {
             .register_type::<PrefabMember>()
             .register_type::<ActiveScene>()
             .register_type::<SceneCameraActivationPolicy>();
+        engine_physics::register_components(app);
+        engine_audio::register_components(app);
 
         if !app.world().contains_resource::<ActiveScene>() {
             let initial_mode = app
@@ -133,7 +141,22 @@ impl Plugin for EngineScenePlugin {
             .allow::<SceneDirectionalLight>()
             .allow::<ScenePointLight>()
             .allow::<PrefabInstance>()
-            .allow::<PrefabMember>();
+            .allow::<PrefabMember>()
+            .allow::<RigidBody2D>()
+            .allow::<RigidBody3D>()
+            .allow::<Collider2D>()
+            .allow::<Collider3D>()
+            .allow::<TriggerVolume2D>()
+            .allow::<TriggerVolume3D>()
+            .allow::<PhysicsJoint2D>()
+            .allow::<PhysicsJoint3D>()
+            .allow::<OneWayPlatform2D>()
+            .allow::<CollisionLayers>()
+            .allow::<PhysicsMaterial>()
+            .allow::<CharacterController2D>()
+            .allow::<CharacterController3D>()
+            .allow::<AudioEmitter>()
+            .allow::<AudioListener>();
         app.insert_resource(filter);
 
         app.add_systems(

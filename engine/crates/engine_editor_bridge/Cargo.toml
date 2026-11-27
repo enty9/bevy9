@@ -11,6 +11,9 @@ workspace = true
 
 [dependencies]
 engine_assets = { workspace = true }
+engine_input = { workspace = true }
+engine_physics = { workspace = true }
+engine_audio = { workspace = true }
 engine_core = { workspace = true }
 engine_protocol = { workspace = true }
 engine_scene = { workspace = true }
@@ -26,6 +29,7 @@ bevy_math = { workspace = true }
 bevy_mesh = { workspace = true }
 bevy_picking = { workspace = true }
 bevy_remote = { workspace = true }
+bevy_settings = { workspace = true }
 bevy_shape = { workspace = true }
 bevy_sprite = { workspace = true }
 bevy_time = { workspace = true }

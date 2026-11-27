@@ -1567,3 +1567,27 @@ button.ghost-btn:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.gameplay-popover {
+  left: auto;
+  right: 0;
+  width: min(440px, 90vw);
+  max-height: min(70vh, 620px);
+  overflow-y: auto;
+}
+
+.gameplay-binding {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.gameplay-mixer {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  align-items: center;
+  gap: 6px;
+}
+
+.gameplay-bus { display: contents; }
+.gameplay-bus input { min-width: 0; width: 100%; }

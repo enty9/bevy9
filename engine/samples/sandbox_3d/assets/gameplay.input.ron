@@ -1,0 +1,15 @@
+(
+    actions: [(id: "move", axis: Axis3D), (id: "jump", axis: Bool), (id: "editor_focus", axis: Bool)],
+    contexts: [
+        (id: "player", priority: 0, bindings: [
+            (id: "left", action: "move", source: Key(KeyA), modifiers: [Invert]),
+            (id: "right", action: "move", source: Key(KeyD)),
+            (id: "forward", action: "move", source: Key(KeyW), channel: Z, modifiers: [Invert]),
+            (id: "back", action: "move", source: Key(KeyS), channel: Z),
+            (id: "jump", action: "jump", source: Key(Space)),
+        ]),
+        (id: "editor", priority: 0, domain: Editor, bindings: [
+            (id: "editor-focus", action: "editor_focus", source: Key(KeyF)),
+        ]),
+    ],
+)

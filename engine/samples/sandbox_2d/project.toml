@@ -9,6 +9,7 @@ startup_scene = "scenes/main.level.ron"
 assets_dir = "assets"
 scenes_dir = "scenes"
 scripts_dir = "scripts"
+input_mapping = "gameplay.input.ron"
 
 [window]
 title = "Bevy9 Engine — Sandbox 2D"

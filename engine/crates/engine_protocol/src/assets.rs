@@ -21,6 +21,8 @@ pub enum AssetKind {
     Script,
     /// Saved material descriptor asset (`.mat.ron`).
     Material,
+    /// Audio clip (`.wav`, `.ogg`, `.mp3`, `.flac`).
+    Audio,
     /// Unrecognized or generic project file.
     #[default]
     Unknown,
@@ -151,6 +153,7 @@ impl AssetImportSettings {
             | AssetKind::Scene
             | AssetKind::Script
             | AssetKind::Material
+            | AssetKind::Audio
             | AssetKind::Unknown => Self::Generic,
         }
     }

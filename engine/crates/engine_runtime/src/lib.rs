@@ -23,10 +23,13 @@ use engine_assets::{
     configure_asset_plugin_for_project, configure_asset_processor_ddc_log,
     register_uuid_asset_source, EngineAssetsPlugin, SharedAssetRegistry,
 };
+use engine_audio::{AudioOptions, EngineAudioPlugin};
 use engine_core::{EngineCorePlugin, ProjectManifest, ProjectPaths, WorldMode};
 use engine_editor_bridge::{
     EditorBridgeConfig, EditorBridgePlugin, EditorIpcServer, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT,
 };
+use engine_input::{EngineInputPlugin, InputContexts, InputDomain, ProjectInputMapping};
+use engine_physics::{EnginePhysicsPlugin, PhysicsDebugPlugin, PhysicsOptions};
 use engine_protocol::ViewportCameraMode;
 use engine_render::{EngineRenderPlugin, ViewportConfig};
 use engine_scene::{load_level_from_file, EngineScenePlugin, SceneCameraActivationPolicy};
@@ -70,6 +73,10 @@ pub struct RuntimeCli {
     /// Optional frame limit after which the runtime exits cleanly.
     #[arg(long)]
     pub max_frames: Option<u32>,
+
+    /// Draw physics collider and joint wireframes when rendering a viewport.
+    #[arg(long)]
+    pub physics_debug: bool,
 
     /// Optional override for the window title in windowed or editor mode.
     #[arg(long)]
@@ -276,7 +283,41 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
         });
     }
 
-    app.add_plugins((EngineAssetsPlugin, EngineScenePlugin));
+    app.insert_resource(InputContexts {
+        domain: if mode == RuntimeMode::Editor {
+            InputDomain::Editor
+        } else {
+            InputDomain::Game
+        },
+        ..Default::default()
+    });
+    app.insert_resource(PhysicsOptions {
+        simulate: mode != RuntimeMode::Editor,
+        debug: cli.physics_debug && mode != RuntimeMode::Headless,
+    });
+    app.insert_resource(AudioOptions {
+        device: mode != RuntimeMode::Headless,
+        gameplay: mode == RuntimeMode::Window,
+    });
+    app.add_plugins((
+        EngineAssetsPlugin,
+        EngineScenePlugin,
+        EngineInputPlugin,
+        EnginePhysicsPlugin,
+        EngineAudioPlugin,
+    ));
+    if mode != RuntimeMode::Headless {
+        app.add_plugins(PhysicsDebugPlugin);
+    }
+    if let Some(mapping) = &manifest.project.input_mapping {
+        let handle = app.world().resource::<AssetServer>().load(mapping.clone());
+        app.insert_resource(ProjectInputMapping(handle));
+    }
+    if cli.project.is_some() && mode != RuntimeMode::Headless {
+        app.add_plugins(bevy_settings::SettingsPlugin::new(&format!(
+            "bevy9-{}", manifest.project.id
+        )));
+    }
 
     if let Some(scene_path) = startup_scene_path {
         load_level_from_file(app.world_mut(), &scene_path)?;

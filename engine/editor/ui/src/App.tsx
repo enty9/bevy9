@@ -1070,6 +1070,8 @@ export function App() {
   return (
     <div className="editor-shell">
       <Toolbar
+        brpClient={brpClient}
+        projectKey={`${hostStatus.project_dir ?? ""}:${hostStatus.pid ?? ""}`}
         samples={samples}
         activeProject={activeProject}
         hostStatus={hostStatus}

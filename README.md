@@ -22,6 +22,10 @@
   - Потоковый **Offscreen Viewport** через RGBA8-буфер по WebSocket IPC + отсоединяемый **Native Window** режим, 3D/2D навигация камеры, GPU/raycast picking и `W`/`E`/`R` гизмо (`World`/`Local`, snap-шаги).
   - **World Outliner** (иерархия, поиск, Drag-and-Drop переподчинение, пресеты и префабы), **Inspector** по схеме Bevy `registry.schema`, **Undo/Redo** (`Ctrl+Z` / `Ctrl+Y`).
   - **Content Browser** (папки, фильтры, миниатюры, настройки импорта, импорт кнопкой и OS Drag-and-Drop, перетаскивание ассетов во Viewport и в поля `AssetUuid` в Inspector).
+- **Игровые подсистемы (этап 5)**
+  - Enhanced Input: `.input.ron` с действиями, осями, контекстами и переназначением клавиш через **Gameplay**. Состояния доступны в `Update` и `FixedUpdate`.
+  - Rapier 2D/3D: тела и коллайдеры, суставы, сенсоры, лучи и свипы форм, контроллеры персонажа, фиксированный шаг и отладочные контуры.
+  - Kira: шины Master/SFX/Music/UI/Voice, 2D/3D-источники, затухание по дистанции, стриминг и предпрослушивание из Content Browser.
 
 ---
 
@@ -37,6 +41,9 @@ bevy9/
     │   ├── engine_core/          # Идентификаторы EntityGuid/AssetUuid, ProjectManifest, расписание EngineSet
     │   ├── engine_protocol/      # JSON-RPC (BRP) контракты, WebSocket IPC сообщения и бинарный фрейм-кодек
     │   ├── engine_assets/        # AssetRegistry, *.b9meta, importers, TilemapAsset, .cache/ddc, ThumbnailService
+    │   ├── engine_input/         # Input Actions, контексты и сохранение привязок
+    │   ├── engine_physics/       # Независимые миры Rapier 2D и 3D
+    │   ├── engine_audio/         # Микшер и пространственное аудио Kira
     │   ├── engine_scene/         # .level.ron, .prefab.ron, 2D/3D/glTF/Tilemap описатели и гидратация
     │   ├── engine_render/        # Offscreen render-target readback, камеры редактора, picking, 2D/3D gizmos
     │   ├── engine_editor_bridge/ # Кастомные BRP-методы engine.* и WebSocket IPC сервер
@@ -95,6 +102,22 @@ cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engin
 - **Трансформация**: `W` — перемещение, `E` — поворот, `R` — масштаб, `Ctrl` (удержание) — привязка к сетке
 - **Правка и файлы**: `Ctrl+Z` / `Ctrl+Y` (`Ctrl+Shift+Z`) — Undo / Redo, `Ctrl+S` — сохранить сцену, `Delete` — удалить выбранный узел
 
+## Проверка этапа 5 в редакторе
+
+1. Откройте `sandbox_2d` или `sandbox_3d` и включите **Gameplay → Viewport collider outlines**. Сравните контуры пола, динамических тел и `Trigger zone` с геометрией сцены. Чтобы увидеть падение и отскок, запустите проект в отдельном окне с `--physics-debug`:
+
+   ```bash
+   cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engine/samples/sandbox_3d --physics-debug
+   ```
+
+2. Выберите объект во вьюпорте. Клавиша `F` фокусирует камеру; переназначьте `editor_focus` в **Gameplay → Input bindings** и проверьте новую клавишу. Кнопка **Reset** восстанавливает авторскую привязку. Настройки сохраняются отдельно для проекта; для этого у проекта должен быть постоянный `project.id`. `project.input_mapping` указывается относительно `assets_dir`.
+3. Импортируйте WAV, OGG/Vorbis, MP3 или FLAC. Выберите клип в **Content Browser → Audio → Play preview** и измените уровень `UI` или `MASTER` в **Gameplay → Audio mixer**. Если нужен тестовый файл: `python3 engine/samples/make_audio_preview.py /tmp/bevy9-preview.wav`.
+4. Для пространственного звука добавьте `AudioEmitter` объекту, выберите его `clip` и установите `Scene2D` или `Scene3D`. Разместите `AudioListener` на игровой камере (в сэмплах он уже есть) и нажмите **Preview emitter** в Inspector. Перемещайте объект и меняйте громкость выбранной шины. `min_distance` и `max_distance` задаются в единицах сцены; у 2D-спрайтов это обычно пиксели. Чтобы источник включался в standalone, задайте `autoplay`.
+
+В редакторе контуры показывают авторские позиции, а предпрослушивание работает через шину UI. Симуляция и автозапуск источников доступны в standalone; Play-In-Editor относится к этапу 6.
+
+Для игрового кода используйте `ActionState::get` в `Update` или `FixedActionState::get` в `FixedUpdate`, `PhysicsWorld2D` / `PhysicsWorld3D` для запросов и импульсов, `CharacterMotion2D` / `CharacterMotion3D` для управления кинематическим персонажем. `CollisionEvent` и `TriggerEvent` доступны через ECS Observers.
+
 ---
 
 ## Проверки и тесты
@@ -102,6 +125,7 @@ cargo run --manifest-path engine/Cargo.toml -p engine_runtime -- --project engin
 ```bash
 # Тесты Rust workspace
 cargo test --manifest-path engine/Cargo.toml -j 2 --workspace
+cargo test --manifest-path engine/Cargo.toml -p engine_input -p engine_physics -p engine_audio
 
 # Линтинг без предупреждений
 cargo clippy --manifest-path engine/Cargo.toml --workspace --all-targets -- -D warnings

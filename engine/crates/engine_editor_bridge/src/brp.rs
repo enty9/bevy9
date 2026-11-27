@@ -64,7 +64,7 @@ use crate::{
 /// Builds Bevy's [`RemotePlugin`] pre-configured with all custom `engine.*` RPC methods.
 #[must_use]
 pub fn build_remote_plugin() -> RemotePlugin {
-    RemotePlugin::default()
+    let remote = RemotePlugin::default()
         .with_method_main(METHOD_SCENE_NEW, handle_scene_new)
         .with_method_main(METHOD_SCENE_LOAD, handle_scene_load)
         .with_method_main(METHOD_SCENE_SAVE, handle_scene_save)
@@ -92,7 +92,8 @@ pub fn build_remote_plugin() -> RemotePlugin {
         .with_method_main(METHOD_ASSET_UPDATE_SETTINGS, handle_asset_update_settings)
         .with_method_main(METHOD_ASSET_THUMBNAIL, handle_asset_thumbnail)
         .with_method_main(METHOD_ASSET_SPAWN_IN_VIEWPORT, handle_asset_spawn_in_viewport)
-        .with_method_main(METHOD_ASSET_RESCAN, handle_asset_rescan)
+        .with_method_main(METHOD_ASSET_RESCAN, handle_asset_rescan);
+    crate::gameplay::register(remote)
 }
 
 /// Builds Bevy's [`RemoteHttpPlugin`] configured from [`EditorBridgeConfig`].
@@ -1156,7 +1157,11 @@ fn handle_asset_spawn_in_viewport(In(params): In<Option<Value>>, world: &mut Wor
                     .map_err(BrpError::internal)?;
             (entity, guid, format!("Spawn Prefab {stem}"))
         }
-        AssetKind::Scene | AssetKind::Script | AssetKind::Material | AssetKind::Unknown => {
+        AssetKind::Scene
+        | AssetKind::Script
+        | AssetKind::Material
+        | AssetKind::Audio
+        | AssetKind::Unknown => {
             return Err(BrpError {
                 code: error_codes::INVALID_PARAMS,
                 message: format!(

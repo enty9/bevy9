@@ -6,6 +6,7 @@ pub mod history;
 pub mod ipc_server;
 pub mod picking;
 pub mod selection;
+mod gameplay;
 
 /// Commonly used editor bridge types and constants.
 pub mod prelude {
@@ -40,6 +41,7 @@ impl Plugin for EditorBridgePlugin {
         let config = app.world().resource::<EditorBridgeConfig>().clone();
 
         app.init_resource::<EditorSelection>()
+            .init_resource::<engine_input::ForwardedInput>()
             .init_resource::<EditorHoveredEntity>()
             .init_resource::<EditorHistory>()
             .init_resource::<selection::BridgeDirtyFlags>()
@@ -73,6 +75,7 @@ impl Plugin for EditorBridgePlugin {
             (
                 ipc_server::process_ipc_inbound
                     .run_if(resource_exists::<EditorIpcServer>)
+                    .before(engine_input::InputSamplingSet)
                     .before(engine_render::picking::ViewportInputCaptureSet),
                 picking::helper_icon_picking_backend
                     .run_if(resource_exists::<RayMap>)
@@ -82,6 +85,7 @@ impl Plugin for EditorBridgePlugin {
         .add_systems(
             Update,
             (
+                gameplay::focus_selection.before(engine_render::EditorCameraSystems),
                 picking::update_transform_gizmos_system
                     .before(engine_render::EditorCameraSystems),
                 history::capture_gizmo_commits_system,

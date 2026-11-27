@@ -240,6 +240,7 @@ fn render_asset_thumbnail(job: &ThumbnailJob) -> RgbaImage {
         | AssetKind::Scene
         | AssetKind::Script
         | AssetKind::Material
+        | AssetKind::Audio
         | AssetKind::Unknown => render_badge_thumbnail(job.kind),
     }
 }
@@ -533,6 +534,7 @@ fn render_badge_thumbnail(kind: AssetKind) -> RgbaImage {
         AssetKind::Tilemap => Rgba([72, 206, 152, 255]),
         AssetKind::Script => Rgba([234, 120, 168, 255]),
         AssetKind::Material => Rgba([196, 144, 248, 255]),
+        AssetKind::Audio => Rgba([93, 214, 202, 255]),
         AssetKind::Unknown => Rgba([142, 150, 165, 255]),
     };
 
