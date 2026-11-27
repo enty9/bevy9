@@ -313,16 +313,52 @@ fn in_space(v: Vec3, space: AudioSpace) -> Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
+    use std::{io::Write, sync::Mutex};
 
-    use kira::backend::mock::{MockBackend, MockBackendSettings};
+    use kira::backend::{mock::MockBackendSettings, Renderer};
 
     use super::*;
 
+    /// Kira's real renderer with the output buffer exposed to assertions.
+    struct CaptureBackend {
+        renderer: Option<Mutex<Renderer>>,
+        output: Vec<f32>,
+    }
+
+    impl Backend for CaptureBackend {
+        type Settings = MockBackendSettings;
+        type Error = ();
+
+        fn setup(settings: Self::Settings, buffer_size: usize) -> Result<(Self, u32), ()> {
+            Ok((
+                Self {
+                    renderer: None,
+                    output: vec![0.; buffer_size * 2],
+                },
+                settings.sample_rate,
+            ))
+        }
+
+        fn start(&mut self, renderer: Renderer) -> Result<(), ()> {
+            self.renderer = Some(Mutex::new(renderer));
+            Ok(())
+        }
+    }
+
+    fn render(backend: &mut KiraAudioBackend<CaptureBackend>) -> f32 {
+        let mock = backend.manager.backend_mut();
+        let renderer = mock.renderer.as_mut().unwrap().get_mut().unwrap();
+        for _ in 0..20 {
+            renderer.on_start_processing();
+            renderer.process(&mut mock.output, 2);
+        }
+        mock.output.iter().map(|v| v.abs()).fold(0., f32::max)
+    }
+
     #[test]
-    fn mock_device_initializes_mixer_and_controls_live_voices() {
+    fn bus_gain_changes_rendered_output_of_live_2d_and_3d_voices() {
         let mut backend =
-            KiraAudioBackend::<MockBackend>::with_device_settings(MockBackendSettings {
+            KiraAudioBackend::<CaptureBackend>::with_device_settings(MockBackendSettings {
                 sample_rate: 48_000,
             })
             .unwrap();
@@ -331,7 +367,10 @@ mod tests {
         let mut file = std::fs::File::create(&path).unwrap();
         let header = b"RIFF\x24\x20\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x80\xbb\0\0\0\x77\x01\0\x02\0\x10\0data\0\x20\0\0";
         file.write_all(header).unwrap();
-        file.write_all(&[0; 8192]).unwrap();
+        for i in 0..4096 {
+            let sample = if i % 100 < 50 { 8192i16 } else { -8192 };
+            file.write_all(&sample.to_le_bytes()).unwrap();
+        }
         drop(file);
         let mut sound = PlaySound {
             path: path.clone(),
@@ -342,42 +381,48 @@ mod tests {
             streaming: false,
             looping: true,
         };
-        let flat = backend.play(&sound).unwrap();
-        sound.spatial = Some(crate::SpatialSound {
-            space: AudioSpace::Scene2D,
-            position: Vec3::X,
-            min_distance: 1.,
-            max_distance: 30.,
-        });
-        let spatial = backend.play(&sound).unwrap();
-        backend.set_position(spatial, Vec3::Y);
         backend.set_listener(Vec3::ZERO, Quat::IDENTITY);
-        for bus in AudioBus::ALL {
+        for (space, bus) in [
+            (AudioSpace::Scene2D, AudioBus::Sfx),
+            (AudioSpace::Scene3D, AudioBus::Master),
+        ] {
+            sound.bus = bus;
+            sound.spatial = Some(crate::SpatialSound {
+                space,
+                position: Vec3::ZERO,
+                min_distance: 1.,
+                max_distance: 30.,
+            });
+            let voice = backend.play(&sound).unwrap();
+            let full = render(&mut backend);
+            assert!(full > 0.05, "{space:?} must produce output: {full}");
             backend.set_bus(
                 bus,
                 BusSettings {
-                    gain: 0.5,
-                    low_pass_hz: 2000.,
-                    reverb: 0.25,
+                    gain: 0.25,
+                    ..Default::default()
                 },
             );
+            let quiet = render(&mut backend);
+            assert!(
+                (quiet / full - 0.25).abs() < 0.02,
+                "{space:?}: {quiet} / {full}"
+            );
+            backend.set_position(voice, Vec3::X * 50.);
+            assert!(
+                render(&mut backend) < 0.001,
+                "{space:?} must attenuate with distance"
+            );
+            assert_eq!(
+                backend.voices[&voice].playback.state(),
+                PlaybackState::Playing
+            );
+            backend.stop(voice);
+            render(&mut backend);
+            backend.collect_finished();
+            assert!(backend.voices.is_empty());
+            backend.set_bus(bus, BusSettings::default());
         }
-        let mock = backend.manager.backend_mut();
-        mock.on_start_processing();
-        mock.process();
-        assert_eq!(
-            backend.voices[&flat].playback.state(),
-            PlaybackState::Playing
-        );
-        assert!(backend.voices[&spatial].spatial.is_some());
-        backend.stop(flat);
-        backend.stop(spatial);
-        for _ in 0..20 {
-            backend.manager.backend_mut().on_start_processing();
-            backend.manager.backend_mut().process();
-        }
-        backend.collect_finished();
-        assert!(backend.voices.is_empty());
         std::fs::remove_file(path).unwrap();
     }
 }

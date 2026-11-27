@@ -303,6 +303,7 @@ pub trait AudioBackend: Send + Sync + 'static {
 pub struct AudioEngine {
     backend: Option<Box<dyn AudioBackend>>,
     preview: Option<(VoiceId, Option<Entity>)>,
+    applied_buses: [Option<BusSettings>; AudioBus::ALL.len()],
 }
 
 impl AudioEngine {
@@ -310,7 +311,7 @@ impl AudioEngine {
     pub fn with_backend(backend: impl AudioBackend) -> Self {
         Self {
             backend: Some(Box::new(backend)),
-            preview: None,
+            ..Default::default()
         }
     }
 
@@ -432,10 +433,16 @@ fn open_device(options: Res<AudioOptions>, mut audio: ResMut<AudioEngine>) {
 }
 
 fn update_mixer(mixer: Res<AudioMixer>, mut audio: ResMut<AudioEngine>) {
+    let audio = audio.as_mut();
     if let Some(backend) = &mut audio.backend {
-        if mixer.is_changed() {
-            for bus in AudioBus::ALL {
-                backend.set_bus(bus, mixer.get(bus).sanitized());
+        if mixer.is_changed() || audio.applied_buses[0].is_none() {
+            for (bus, applied) in AudioBus::ALL.into_iter().zip(&mut audio.applied_buses) {
+                let settings = mixer.get(bus).sanitized();
+                // Updating one fader shouldn't restart the tweens on other buses.
+                if *applied != Some(settings) {
+                    backend.set_bus(bus, settings);
+                    *applied = Some(settings);
+                }
             }
         }
         backend.collect_finished();
