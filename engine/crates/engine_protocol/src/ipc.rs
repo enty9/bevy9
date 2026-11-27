@@ -3,8 +3,12 @@
 use engine_core::{EntityGuid, WorldMode};
 use serde::{Deserialize, Serialize};
 
-use crate::viewport::{
-    GizmoMode, GizmoSnapConfig, GizmoSpace, ViewportCameraMode, ViewportInputEvent, ViewportMode,
+use crate::{
+    pie::PieStatePayload,
+    viewport::{
+        GizmoMode, GizmoSnapConfig, GizmoSpace, ViewportCameraMode, ViewportInputEvent,
+        ViewportMode,
+    },
 };
 
 /// Severity levels for runtime log messages forwarded to the editor Console.
@@ -196,6 +200,11 @@ pub enum ServerIpcMessage {
     HistoryStateChanged {
         /// Updated history stack summary.
         state: HistoryStatePayload,
+    },
+    /// Notification that Play-In-Editor (PIE) lifecycle state or session telemetry changed.
+    PieStateChanged {
+        /// Updated PIE state and metrics.
+        state: PieStatePayload,
     },
     /// Notification that the project `AssetRegistry` or cached thumbnails changed.
     AssetsChanged {

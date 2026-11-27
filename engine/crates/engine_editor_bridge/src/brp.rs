@@ -21,7 +21,8 @@ use engine_protocol::{
     AssetImportParams, AssetImportResult, AssetKind, AssetListParams, AssetMoveParams,
     AssetSpawnInViewportParams, AssetSpawnInViewportResult, AssetThumbnailParams,
     AssetThumbnailResult, AssetUpdateSettingsParams, ComponentMutationResult, DeleteEntityParams,
-    DeleteEntityResult, PrefabApplyResult, PrefabInstanceActionParams, PrefabListResult,
+    DeleteEntityResult, HistoryStatePayload, PrefabApplyResult, PrefabInstanceActionParams,
+    PrefabListResult,
     PrefabRevertParams, PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams,
     PrefabSpawnResult, RemoveComponentParams, ReparentEntityParams, ReparentEntityResult,
     SceneLoadParams, SceneNewParams, SceneOperationResult, SceneSaveParams, SetComponentParams,
@@ -58,6 +59,7 @@ use crate::{
         short_type_name, sync_entity_prefab_overrides_if_member, undo_last, EditorCommand,
         EditorHistory,
     },
+    pie::{is_pie_active, reject_during_pie},
     selection::{BridgeDirtyFlags, EditorSelection},
 };
 
@@ -93,7 +95,8 @@ pub fn build_remote_plugin() -> RemotePlugin {
         .with_method_main(METHOD_ASSET_THUMBNAIL, handle_asset_thumbnail)
         .with_method_main(METHOD_ASSET_SPAWN_IN_VIEWPORT, handle_asset_spawn_in_viewport)
         .with_method_main(METHOD_ASSET_RESCAN, handle_asset_rescan);
-    crate::gameplay::register(remote)
+    let remote = crate::gameplay::register(remote);
+    crate::pie::register(remote)
 }
 
 /// Builds Bevy's [`RemoteHttpPlugin`] configured from [`EditorBridgeConfig`].
@@ -176,7 +179,9 @@ fn is_protected_component(type_path: &str) -> bool {
 }
 
 fn mark_mutation_dirty(world: &mut World, hierarchy_dirty: bool, refresh_guid: Option<EntityGuid>) {
-    if let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>() {
+    if !is_pie_active(world)
+        && let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>()
+    {
         active_scene.dirty = true;
     }
     if hierarchy_dirty && let Some(mut dirty) = world.get_resource_mut::<BridgeDirtyFlags>() {
@@ -197,6 +202,7 @@ fn count_scene_entities(world: &mut World) -> usize {
 }
 
 fn handle_scene_new(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "create a new scene")?;
     let params: SceneNewParams = parse_some(params)?;
     let name = if params.name.trim().is_empty() {
         "Untitled Scene".to_owned()
@@ -217,6 +223,7 @@ fn handle_scene_new(In(params): In<Option<Value>>, world: &mut World) -> BrpResu
 }
 
 fn handle_scene_load(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "load a scene")?;
     let params: SceneLoadParams = parse_some(params)?;
     if params.path.trim().is_empty() {
         return Err(BrpError {
@@ -241,6 +248,7 @@ fn handle_scene_load(In(params): In<Option<Value>>, world: &mut World) -> BrpRes
 }
 
 fn handle_scene_save(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "save scene")?;
     let params: SceneSaveParams = match params {
         None | Some(Value::Null) => SceneSaveParams {
             path: None,
@@ -363,16 +371,18 @@ fn handle_entity_spawn_preset(In(params): In<Option<Value>>, world: &mut World) 
         .map(|n| n.as_str().to_owned())
         .unwrap_or_else(|| default_preset_name(params.preset).to_owned());
 
-    let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
-        history.record(
-            EditorCommand::CreateEntity {
-                snapshot,
-                label: format!("Create {name}"),
-            },
-            None,
-            now_epoch_ms(),
-        );
+    if !is_pie_active(world) {
+        let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
+        if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+            history.record(
+                EditorCommand::CreateEntity {
+                    snapshot,
+                    label: format!("Create {name}"),
+                },
+                None,
+                now_epoch_ms(),
+            );
+        }
     }
 
     mark_mutation_dirty(world, true, None);
@@ -391,7 +401,12 @@ fn handle_entity_delete(In(params): In<Option<Value>>, world: &mut World) -> Brp
     let name = world
         .get::<Name>(entity)
         .map_or_else(|| "Entity".to_owned(), |n| n.as_str().to_owned());
-    let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
+    let pie_active = is_pie_active(world);
+    let snapshot = if pie_active {
+        None
+    } else {
+        Some(snapshot_subtree(world, entity).map_err(BrpError::internal)?)
+    };
     let previous_selection = world
         .get_resource::<EditorSelection>()
         .map(|s| s.guids().to_vec())
@@ -400,7 +415,9 @@ fn handle_entity_delete(In(params): In<Option<Value>>, world: &mut World) -> Brp
     let deleted_guids = despawn_subtree(world, entity);
     let selection_changed = prune_selection_guids(world, &deleted_guids);
 
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+    if let Some(snapshot) = snapshot
+        && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
+    {
         history.record(
             EditorCommand::DeleteEntity {
                 snapshot,
@@ -418,7 +435,9 @@ fn handle_entity_delete(In(params): In<Option<Value>>, world: &mut World) -> Brp
             dirty.selection_dirty = true;
         }
     }
-    if let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>() {
+    if !pie_active
+        && let Some(mut active_scene) = world.get_resource_mut::<ActiveScene>()
+    {
         active_scene.dirty = true;
     }
 
@@ -439,7 +458,9 @@ fn handle_entity_reparent(In(params): In<Option<Value>>, world: &mut World) -> B
             data: None,
         })?;
 
-        if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+        if !is_pie_active(world)
+            && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
+        {
             history.record(
                 EditorCommand::Reparent {
                     guid: params.guid,
@@ -476,7 +497,8 @@ fn handle_component_set(In(params): In<Option<Value>>, world: &mut World) -> Brp
     write_reflected_component_json(world, entity, &params.type_path, &params.value)
         .map_err(BrpError::component_error)?;
 
-    if before.as_ref() != Some(&params.value)
+    if !is_pie_active(world)
+        && before.as_ref() != Some(&params.value)
         && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
     {
         let label = params
@@ -529,7 +551,9 @@ fn handle_component_add(In(params): In<Option<Value>>, world: &mut World) -> Brp
     write_reflected_component_json(world, entity, &params.type_path, &params.value)
         .map_err(BrpError::component_error)?;
 
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+    if !is_pie_active(world)
+        && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
+    {
         let cmd = match before {
             Some(prev_val) => EditorCommand::SetComponent {
                 guid: params.guid,
@@ -573,7 +597,9 @@ fn handle_component_remove(In(params): In<Option<Value>>, world: &mut World) -> 
 
     remove_reflected_component(world, entity, &params.type_path).map_err(BrpError::component_error)?;
 
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+    if !is_pie_active(world)
+        && let Some(mut history) = world.get_resource_mut::<EditorHistory>()
+    {
         history.record(
             EditorCommand::RemoveComponent {
                 guid: params.guid,
@@ -595,24 +621,31 @@ fn handle_component_remove(In(params): In<Option<Value>>, world: &mut World) -> 
 }
 
 fn handle_history_undo(In(_params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "undo")?;
     let res = undo_last(world).map_err(BrpError::internal)?;
     serialize_result(res)
 }
 
 fn handle_history_redo(In(_params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "redo")?;
     let res = redo_last(world).map_err(BrpError::internal)?;
     serialize_result(res)
 }
 
 fn handle_history_state(In(_params): In<Option<Value>>, world: &mut World) -> BrpResult {
-    let state = world
-        .get_resource::<EditorHistory>()
-        .map(EditorHistory::state)
-        .unwrap_or_default();
+    let state = if is_pie_active(world) {
+        HistoryStatePayload::default()
+    } else {
+        world
+            .get_resource::<EditorHistory>()
+            .map(EditorHistory::state)
+            .unwrap_or_default()
+    };
     serialize_result(state)
 }
 
 fn handle_prefab_save(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "save prefab")?;
     let params: PrefabSaveParams = parse_some(params)?;
     if params.path.trim().is_empty() {
         return Err(BrpError {
@@ -680,16 +713,18 @@ fn handle_prefab_spawn(In(params): In<Option<Value>>, world: &mut World) -> BrpR
         .get::<Name>(spawned_root)
         .map_or_else(|| "Prefab".to_owned(), |n| n.as_str().to_owned());
 
-    let snapshot = snapshot_subtree(world, spawned_root).map_err(BrpError::internal)?;
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
-        history.record(
-            EditorCommand::CreateEntity {
-                snapshot,
-                label: format!("Instantiate {name}"),
-            },
-            None,
-            now_epoch_ms(),
-        );
+    if !is_pie_active(world) {
+        let snapshot = snapshot_subtree(world, spawned_root).map_err(BrpError::internal)?;
+        if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+            history.record(
+                EditorCommand::CreateEntity {
+                    snapshot,
+                    label: format!("Instantiate {name}"),
+                },
+                None,
+                now_epoch_ms(),
+            );
+        }
     }
 
     mark_mutation_dirty(world, true, None);
@@ -703,6 +738,7 @@ fn handle_prefab_spawn(In(params): In<Option<Value>>, world: &mut World) -> BrpR
 }
 
 fn handle_prefab_apply(In(params): In<Option<Value>>, world: &mut World) -> BrpResult {
+    reject_during_pie(world, "apply prefab")?;
     let params: PrefabInstanceActionParams = parse_some(params)?;
     let target_entity = lookup_entity_by_guid(world, params.guid)?;
     let Some((instance_root, prefab_path)) = resolve_prefab_instance_root(world, target_entity)
@@ -755,14 +791,23 @@ fn handle_prefab_revert(In(params): In<Option<Value>>, world: &mut World) -> Brp
         None => None,
     };
 
+    let pie_active = is_pie_active(world);
     let abs_path = resolve_project_path(world, &prefab_path);
-    let before = snapshot_subtree(world, instance_root).map_err(BrpError::internal)?;
+    let before = if pie_active {
+        None
+    } else {
+        Some(snapshot_subtree(world, instance_root).map_err(BrpError::internal)?)
+    };
     let filter_ref = component_filter_source
         .as_ref()
         .map(|(src_guid, tp)| (*src_guid, tp.as_str()));
     let reverted_guids = revert_prefab_instance(world, instance_root, &abs_path, filter_ref)
         .map_err(BrpError::internal)?;
-    let after = snapshot_subtree(world, instance_root).map_err(BrpError::internal)?;
+    let after = if pie_active {
+        None
+    } else {
+        Some(snapshot_subtree(world, instance_root).map_err(BrpError::internal)?)
+    };
 
     let label = match component_filter_source {
         Some((_, ref tp)) => format!("Revert {}", short_type_name(tp)),
@@ -771,15 +816,17 @@ fn handle_prefab_revert(In(params): In<Option<Value>>, world: &mut World) -> Brp
 
     let root_guid = world.get::<EntityGuid>(instance_root).copied();
     if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
-        history.record(
-            EditorCommand::RestoreSubtree {
-                before,
-                after,
-                label,
-            },
-            None,
-            now_epoch_ms(),
-        );
+        if let (Some(before), Some(after)) = (before, after) {
+            history.record(
+                EditorCommand::RestoreSubtree {
+                    before,
+                    after,
+                    label,
+                },
+                None,
+                now_epoch_ms(),
+            );
+        }
         history.queue_inspector_refresh(&reverted_guids);
         if let Some(r_guid) = root_guid {
             history.queue_inspector_refresh(&[r_guid]);
@@ -1177,13 +1224,15 @@ fn handle_asset_spawn_in_viewport(In(params): In<Option<Value>>, world: &mut Wor
         .get::<Name>(entity)
         .map_or(stem, |n| n.as_str().to_owned());
 
-    let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
-    if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
-        history.record(
-            EditorCommand::CreateEntity { snapshot, label },
-            None,
-            now_epoch_ms(),
-        );
+    if !is_pie_active(world) {
+        let snapshot = snapshot_subtree(world, entity).map_err(BrpError::internal)?;
+        if let Some(mut history) = world.get_resource_mut::<EditorHistory>() {
+            history.record(
+                EditorCommand::CreateEntity { snapshot, label },
+                None,
+                now_epoch_ms(),
+            );
+        }
     }
 
     let selection_changed = world

@@ -2,6 +2,7 @@
 
 pub mod assets;
 pub mod ipc;
+pub mod pie;
 pub mod rpc;
 pub mod viewport;
 
@@ -20,27 +21,30 @@ pub mod prelude {
             ClientIpcMessage, EditorLogEntry, FrameMetrics, HistoryStatePayload, LogLevel,
             SceneTreeNode, ServerIpcMessage,
         },
+        pie::{PieState, PieStatePayload},
         rpc::{
             AddComponentParams, AssetCreateFolderParams, AssetCreateFolderResult,
             AssetDeleteParams, AssetDeleteResult, AssetImportParams, AssetImportResult,
             AssetListParams, AssetListResult, AssetMoveParams, AssetSpawnInViewportParams,
             AssetSpawnInViewportResult, AssetThumbnailParams, AssetThumbnailResult,
             AssetUpdateSettingsParams, ComponentMutationResult, DeleteEntityParams,
-            DeleteEntityResult, EntityPresetKind, HistoryStepResult, PrefabApplyResult,
-            PrefabFileEntry, PrefabInstanceActionParams, PrefabListResult, PrefabRevertParams,
-            PrefabRevertResult, PrefabSaveParams, PrefabSaveResult, PrefabSpawnParams,
-            PrefabSpawnResult, RemoveComponentParams, ReparentEntityParams, ReparentEntityResult,
-            SceneLoadParams, SceneNewParams, SceneOperationResult, SceneSaveParams,
-            SetComponentParams, SetViewportModeParams, SetViewportModeResult, SpawnPresetParams,
-            SpawnPresetResult, WorldTreeResult, METHOD_ASSET_CREATE_FOLDER, METHOD_ASSET_DELETE,
-            METHOD_ASSET_IMPORT, METHOD_ASSET_LIST, METHOD_ASSET_MOVE, METHOD_ASSET_RESCAN,
+            DeleteEntityResult, EntityPresetKind, HistoryStepResult, PieStateResult,
+            PieStepParams, PrefabApplyResult, PrefabFileEntry, PrefabInstanceActionParams,
+            PrefabListResult, PrefabRevertParams, PrefabRevertResult, PrefabSaveParams,
+            PrefabSaveResult, PrefabSpawnParams, PrefabSpawnResult, RemoveComponentParams,
+            ReparentEntityParams, ReparentEntityResult, SceneLoadParams, SceneNewParams,
+            SceneOperationResult, SceneSaveParams, SetComponentParams, SetViewportModeParams,
+            SetViewportModeResult, SpawnPresetParams, SpawnPresetResult, WorldTreeResult,
+            METHOD_ASSET_CREATE_FOLDER, METHOD_ASSET_DELETE, METHOD_ASSET_IMPORT,
+            METHOD_ASSET_LIST, METHOD_ASSET_MOVE, METHOD_ASSET_RESCAN,
             METHOD_ASSET_SPAWN_IN_VIEWPORT, METHOD_ASSET_THUMBNAIL, METHOD_ASSET_UPDATE_SETTINGS,
             METHOD_COMPONENT_ADD, METHOD_COMPONENT_REMOVE, METHOD_COMPONENT_SET,
             METHOD_ENTITY_DELETE, METHOD_ENTITY_REPARENT, METHOD_ENTITY_SPAWN_PRESET,
-            METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_PREFAB_APPLY,
-            METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE, METHOD_PREFAB_SPAWN,
-            METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE, METHOD_VIEWPORT_SET_MODE,
-            METHOD_WORLD_TREE,
+            METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO, METHOD_PIE_PAUSE,
+            METHOD_PIE_PLAY, METHOD_PIE_STATE, METHOD_PIE_STEP, METHOD_PIE_STOP,
+            METHOD_PREFAB_APPLY, METHOD_PREFAB_LIST, METHOD_PREFAB_REVERT, METHOD_PREFAB_SAVE,
+            METHOD_PREFAB_SPAWN, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE,
+            METHOD_VIEWPORT_SET_MODE, METHOD_WORLD_TREE,
         },
         viewport::{
             decode_viewport_frame, encode_viewport_frame, GizmoMode, GizmoSnapConfig, GizmoSpace,
@@ -219,6 +223,15 @@ mod tests {
                     redo_len: 0,
                 },
             },
+            ServerIpcMessage::PieStateChanged {
+                state: PieStatePayload {
+                    state: PieState::Playing,
+                    fixed_steps: 12,
+                    frame_count: 14,
+                    elapsed_secs: 0.2,
+                    using_scene_camera: true,
+                },
+            },
             ServerIpcMessage::AssetsChanged { revision: 3 },
             ServerIpcMessage::Log {
                 entry: EditorLogEntry {
@@ -348,5 +361,47 @@ mod tests {
             serde_json::to_string(&ViewportCameraMode::Mode2D).unwrap(),
             "\"2d\""
         );
+    }
+
+    #[test]
+    fn pie_protocol_types_and_methods_roundtrip() {
+        assert_eq!(
+            serde_json::to_string(&PieState::Editing).unwrap(),
+            "\"editing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PieState::Playing).unwrap(),
+            "\"playing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PieState::Paused).unwrap(),
+            "\"paused\""
+        );
+        assert!(PieState::Editing.is_editing());
+        assert!(!PieState::Editing.is_active());
+        assert!(PieState::Playing.is_active() && PieState::Playing.is_playing());
+        assert!(PieState::Paused.is_active() && PieState::Paused.is_paused());
+
+        let default_step: PieStepParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(default_step, PieStepParams { steps: 1 });
+        let custom_step: PieStepParams = serde_json::from_str(r#"{"steps":4}"#).unwrap();
+        assert_eq!(custom_step, PieStepParams { steps: 4 });
+
+        let payload = PieStatePayload {
+            state: PieState::Paused,
+            fixed_steps: 7,
+            frame_count: 9,
+            elapsed_secs: 0.125,
+            using_scene_camera: false,
+        };
+        let encoded = serde_json::to_string(&payload).unwrap();
+        let decoded: PieStateResult = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded, payload);
+
+        assert_eq!(METHOD_PIE_PLAY, "engine.pie.play");
+        assert_eq!(METHOD_PIE_PAUSE, "engine.pie.pause");
+        assert_eq!(METHOD_PIE_STEP, "engine.pie.step");
+        assert_eq!(METHOD_PIE_STOP, "engine.pie.stop");
+        assert_eq!(METHOD_PIE_STATE, "engine.pie.state");
     }
 }

@@ -459,6 +459,12 @@ fn brp_custom_methods_and_ws_ipc_roundtrip() {
     let msg6 = recv_server_json_while_pumping(&mut app, &mut ws);
     assert!(matches!(msg6, ServerIpcMessage::HistoryStateChanged { .. }));
 
+    let msg7 = recv_server_json_while_pumping(&mut app, &mut ws);
+    assert!(matches!(
+        msg7,
+        ServerIpcMessage::PieStateChanged { state } if state.state == engine_protocol::PieState::Editing
+    ));
+
     // Ping / Pong
     let ping = ClientIpcMessage::Ping { nonce: 42 };
     ws.send(Message::text(serde_json::to_string(&ping).unwrap()))

@@ -2,6 +2,7 @@
 
 pub mod components;
 pub mod hydration;
+pub mod pie;
 pub mod prefab;
 pub mod presets;
 pub mod serialization;
@@ -15,6 +16,10 @@ pub mod prelude {
             SceneGltfModel, ScenePointLight, SceneTilemap, SpriteDesc, StandardMaterialDesc,
         },
         hydration::{HydratedGltfModelRoot, HydratedTilemapTile},
+        pie::{
+            capture_pie_snapshot, clear_pie_scene_entities, restore_pie_snapshot, PieRuntimeEntity,
+            PieSnapshot,
+        },
         prefab::{
             apply_prefab_instance, ensure_prefab_extension, list_prefab_files,
             normalize_prefab_path, prefab_component_override_key, prefab_field_override_key,
@@ -94,6 +99,7 @@ impl Plugin for EngineScenePlugin {
             .register_type::<ScenePointLight>()
             .register_type::<PrefabInstance>()
             .register_type::<PrefabMember>()
+            .register_type::<PieRuntimeEntity>()
             .register_type::<ActiveScene>()
             .register_type::<SceneCameraActivationPolicy>();
         engine_physics::register_components(app);

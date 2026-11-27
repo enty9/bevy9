@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    assets::{AssetImportSettings, AssetKind, AssetRecord, AssetRegistrySnapshot, AssetFolderEntry},
+    assets::{AssetFolderEntry, AssetImportSettings, AssetKind, AssetRecord, AssetRegistrySnapshot},
     ipc::{HistoryStatePayload, SceneTreeNode},
+    pie::PieStatePayload,
     viewport::ViewportMode,
 };
 
@@ -93,6 +94,21 @@ pub const METHOD_ASSET_SPAWN_IN_VIEWPORT: &str = "engine.asset.spawn_in_viewport
 
 /// BRP method name for forcing an immediate full rescan of the project `AssetRegistry`.
 pub const METHOD_ASSET_RESCAN: &str = "engine.asset.rescan";
+
+/// BRP method name for starting or resuming Play-In-Editor (PIE) simulation.
+pub const METHOD_PIE_PLAY: &str = "engine.pie.play";
+
+/// BRP method name for pausing an active Play-In-Editor (PIE) session.
+pub const METHOD_PIE_PAUSE: &str = "engine.pie.pause";
+
+/// BRP method name for advancing Play-In-Editor (PIE) by one or more fixed simulation steps.
+pub const METHOD_PIE_STEP: &str = "engine.pie.step";
+
+/// BRP method name for stopping Play-In-Editor (PIE) and restoring the pre-PIE scene snapshot.
+pub const METHOD_PIE_STOP: &str = "engine.pie.stop";
+
+/// BRP method name for querying the current Play-In-Editor (PIE) state and session telemetry.
+pub const METHOD_PIE_STATE: &str = "engine.pie.state";
 
 /// Parameters for [`METHOD_SCENE_NEW`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -530,3 +546,26 @@ pub type AssetListResult = AssetRegistrySnapshot;
 
 /// Re-exported alias clarifying [`AssetFolderEntry`] return type of [`METHOD_ASSET_CREATE_FOLDER`].
 pub type AssetCreateFolderResult = AssetFolderEntry;
+
+const fn default_pie_step_count() -> u32 {
+    1
+}
+
+/// Optional parameters for [`METHOD_PIE_STEP`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PieStepParams {
+    /// Number of fixed simulation ticks to advance (defaults to `1`).
+    #[serde(default = "default_pie_step_count")]
+    pub steps: u32,
+}
+
+impl Default for PieStepParams {
+    fn default() -> Self {
+        Self {
+            steps: default_pie_step_count(),
+        }
+    }
+}
+
+/// Re-exported alias clarifying [`PieStatePayload`] return type of PIE BRP methods.
+pub type PieStateResult = PieStatePayload;

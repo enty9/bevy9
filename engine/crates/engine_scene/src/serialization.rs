@@ -138,13 +138,14 @@ pub enum SceneError {
 
 /// Removes all entities marked with [`SceneEntity`] from `world`.
 pub fn clear_scene_entities(world: &mut World) {
-    let scene_entities: Vec<Entity> = world
+    let mut scene_entities: Vec<Entity> = world
         .archetypes()
         .iter()
         .flat_map(|archetype| archetype.entities())
         .map(ArchetypeEntity::id)
         .filter(|&entity| world.entity(entity).contains::<SceneEntity>())
         .collect();
+    scene_entities.sort_by_key(|&entity| (world.get::<EntityGuid>(entity).copied(), entity));
 
     for entity in scene_entities {
         if world.get_entity(entity).is_ok() {
@@ -174,13 +175,14 @@ pub fn save_level_to_string(world: &World, metadata: &LevelMetadata) -> Result<S
         .map(SceneSerializationFilter::to_world_filter)
         .unwrap_or_else(WorldFilter::allow_all);
 
-    let scene_entities: Vec<Entity> = world
+    let mut scene_entities: Vec<Entity> = world
         .archetypes()
         .iter()
         .flat_map(|archetype| archetype.entities())
         .map(ArchetypeEntity::id)
         .filter(|&entity| world.entity(entity).contains::<SceneEntity>())
         .collect();
+    scene_entities.sort_by_key(|&entity| (world.get::<EntityGuid>(entity).copied(), entity));
 
     let dynamic_world = DynamicWorldBuilder::from_world(world, &type_registry)
         .with_component_filter(filter)
@@ -604,7 +606,7 @@ pub fn remove_reflected_component(
 }
 
 pub(crate) fn restore_hierarchy_children(world: &mut World, spawned_entities: &[Entity]) {
-    let child_links: Vec<(Entity, Entity)> = spawned_entities
+    let mut child_links: Vec<(Entity, Entity)> = spawned_entities
         .iter()
         .filter_map(|&entity| {
             let parent = world.get::<ChildOf>(entity)?.parent();
@@ -618,6 +620,7 @@ pub(crate) fn restore_hierarchy_children(world: &mut World, spawned_entities: &[
             }
         })
         .collect();
+    child_links.sort_by_key(|&(entity, _)| (world.get::<EntityGuid>(entity).copied(), entity));
 
     for (entity, parent) in child_links {
         if world.get_entity(parent).is_ok() {

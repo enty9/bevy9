@@ -31,7 +31,8 @@ use engine_core::{ProjectManifest, WorldMode};
 use engine_input::ForwardedInput;
 use engine_protocol::{
     encode_viewport_frame, ClientIpcMessage, FrameMetrics, GizmoMode, GizmoSnapConfig,
-    GizmoSpace, PointerButtonCode, ServerIpcMessage, ViewportCameraMode, ViewportInputEvent, ViewportMode, PROTOCOL_VERSION,
+    GizmoSpace, HistoryStatePayload, PointerButtonCode, ServerIpcMessage, ViewportCameraMode,
+    ViewportInputEvent, ViewportMode, PROTOCOL_VERSION,
 };
 use engine_render::{
     gizmo::TransformGizmoState, ViewportConfig, ViewportFrameChannel, ViewportFramePacket,
@@ -42,6 +43,7 @@ use tungstenite::{accept, Message};
 
 use crate::{
     history::EditorHistory,
+    pie::{is_pie_active, PieController, PieSessionState},
     selection::{BridgeDirtyFlags, EditorSelection},
 };
 
@@ -531,10 +533,16 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
         .map(|s| s.guids().to_vec())
         .unwrap_or_default();
 
-    let history_state = world
-        .get_resource::<EditorHistory>()
-        .map(EditorHistory::state)
-        .unwrap_or_default();
+    let pie_state = PieController::state(world);
+
+    let history_state = if pie_state.state.is_active() {
+        HistoryStatePayload::default()
+    } else {
+        world
+            .get_resource::<EditorHistory>()
+            .map(EditorHistory::state)
+            .unwrap_or_default()
+    };
 
     let roots = build_scene_tree(world);
 
@@ -593,6 +601,10 @@ fn send_hello_snapshot(world: &mut World, client_id: u64, client_protocol_versio
             state: history_state,
         },
     );
+    ipc.send_to(
+        client_id,
+        &ServerIpcMessage::PieStateChanged { state: pie_state },
+    );
     if let Some(registry) = world.get_resource::<AssetRegistry>() {
         ipc.send_to(
             client_id,
@@ -639,12 +651,28 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
         .map(|mut gizmo| core::mem::take(&mut gizmo.inspector_refresh_guids))
         .unwrap_or_default();
 
+    let pie_active = is_pie_active(world);
+    let pie_update = world
+        .get_resource_mut::<PieSessionState>()
+        .and_then(|mut pie| {
+            if pie.dirty {
+                pie.dirty = false;
+                Some(pie.payload())
+            } else {
+                None
+            }
+        });
+
     let (history_update, history_refresh) = world
         .get_resource_mut::<EditorHistory>()
         .map_or((None, Vec::new()), |mut history| {
             let state = if history.dirty {
                 history.dirty = false;
-                Some(history.state())
+                Some(if pie_active {
+                    HistoryStatePayload::default()
+                } else {
+                    history.state()
+                })
             } else {
                 None
             };
@@ -727,6 +755,12 @@ pub(crate) fn publish_ipc_updates(world: &mut World) {
         && let Some(ipc) = world.get_resource::<EditorIpcServer>()
     {
         ipc.broadcast_message(&ServerIpcMessage::HistoryStateChanged { state });
+    }
+
+    if let Some(state) = pie_update
+        && let Some(ipc) = world.get_resource::<EditorIpcServer>()
+    {
+        ipc.broadcast_message(&ServerIpcMessage::PieStateChanged { state });
     }
 
     if !refresh_guids.is_empty()
