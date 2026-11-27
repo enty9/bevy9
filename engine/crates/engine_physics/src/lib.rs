@@ -390,6 +390,10 @@ pub struct CastHit<V> {
     pub normal: V,
 }
 
+/// System set synchronizing authored descriptors into physics worlds for editor debug previews.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PhysicsDebugSyncSet;
+
 /// Installs both fixed-step physics worlds without requiring a renderer.
 pub struct EnginePhysicsPlugin;
 
@@ -414,9 +418,15 @@ impl Plugin for EnginePhysicsPlugin {
             )
             .add_systems(
                 PostUpdate,
-                (dim2::interpolate, dim3::interpolate)
-                    .chain()
-                    .before(TransformSystems::Propagate),
+                (
+                    (dim2::interpolate, dim3::interpolate)
+                        .chain()
+                        .before(TransformSystems::Propagate),
+                    (dim2::sync_debug, dim3::sync_debug)
+                        .chain()
+                        .in_set(PhysicsDebugSyncSet)
+                        .after(TransformSystems::Propagate),
+                ),
             );
     }
 }
@@ -449,11 +459,18 @@ pub struct PhysicsDebugPlugin;
 
 impl Plugin for PhysicsDebugPlugin {
     fn build(&self, app: &mut App) {
-        use bevy_gizmos::{config::GizmoConfig, AppGizmoBuilder};
+        use bevy_gizmos::{
+            config::{GizmoConfig, GizmoLineConfig},
+            AppGizmoBuilder,
+        };
         app.insert_gizmo_config(
             PhysicsGizmos,
             GizmoConfig {
-                depth_bias: -1.,
+                depth_bias: -0.02,
+                line: GizmoLineConfig {
+                    width: 2.0,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )
@@ -461,6 +478,7 @@ impl Plugin for PhysicsDebugPlugin {
             PostUpdate,
             (dim2::draw_debug, dim3::draw_debug)
                 .chain()
+                .after(PhysicsDebugSyncSet)
                 .after(TransformSystems::Propagate),
         );
     }

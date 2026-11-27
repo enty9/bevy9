@@ -1,5 +1,6 @@
 //! XY shape conversion and platformer policies.
 
+use bevy_camera::Camera2d;
 use bevy_math::{EulerRot, Quat};
 use engine_assets::{load_tilemap_from_file, AssetRegistry, TilemapAsset};
 use rapier::control::{CharacterLength, KinematicCharacterController};
@@ -20,7 +21,8 @@ backend!(
     CharacterMotion2D,
     D2,
     Vec2,
-    100.
+    100.,
+    Camera2d
 );
 
 fn vector(v: Vec2) -> Vector<f32> {
@@ -33,7 +35,7 @@ fn from_vector(v: Vector<f32>) -> Vec2 {
     Vec2::new(v.x, v.y)
 }
 fn debug_point(p: Point<f32>) -> Vec3 {
-    Vec3::new(p.x, p.y, 50.)
+    Vec3::new(p.x, p.y, 0.)
 }
 fn dimensions(v: Vec3) -> Vec2 {
     v.truncate()
@@ -155,7 +157,7 @@ fn shape_builder(
         Collider2D::Ball(r) => Some(ColliderBuilder::ball(size(r * sizes.max_element())?)),
         Collider2D::Capsule(h, r) => Some(ColliderBuilder::capsule_y(
             size(h * sizes.y)?,
-            size(r * sizes.max_element())?,
+            size(r * sizes.x)?,
         )),
         Collider2D::Segment(a, b) if a != b => {
             let points = points(&[*a, *b])?;

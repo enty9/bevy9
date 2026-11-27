@@ -1,5 +1,6 @@
 //! XYZ shape conversion and stair/slope policy.
 
+use bevy_camera::Camera3d;
 use bevy_math::Quat;
 use rapier::{
     control::{CharacterAutostep, CharacterLength, KinematicCharacterController},
@@ -22,7 +23,8 @@ backend!(
     CharacterMotion3D,
     D3,
     Vec3,
-    1.
+    1.,
+    Camera3d
 );
 
 fn vector(v: Vec3) -> Vector<f32> {
@@ -101,7 +103,7 @@ fn shape_builder(
         Collider3D::Ball(r) => Some(ColliderBuilder::ball(size(r * sizes.max_element())?)),
         Collider3D::Capsule(h, r) => Some(ColliderBuilder::capsule_y(
             size(h * sizes.y)?,
-            size(r * sizes.max_element())?,
+            size(r * sizes.x.max(sizes.z))?,
         )),
         Collider3D::Cylinder(h, r) => Some(ColliderBuilder::cylinder(
             size(h * sizes.y)?,

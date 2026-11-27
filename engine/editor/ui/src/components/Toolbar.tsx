@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   FilePlus2,
   FolderOpen,
@@ -24,6 +24,7 @@ import type {
 interface ToolbarProps {
   brpClient: BrpClient | null;
   projectKey: string;
+  physicsDebug: boolean;
   samples: ProjectSummary[];
   activeProject: ProjectSummary | null;
   hostStatus: EngineHostStatus;
@@ -43,6 +44,7 @@ interface ToolbarProps {
   onUndo: () => void;
   onRedo: () => void;
   onSetCameraMode: (mode: ViewportCameraMode) => void;
+  onTogglePhysicsDebug: (enabled: boolean) => Promise<void>;
   onStartHost: () => void;
   onRestartHost: () => void;
   onResetLayout: () => void;
@@ -51,6 +53,7 @@ interface ToolbarProps {
 export function Toolbar({
   brpClient,
   projectKey,
+  physicsDebug,
   samples,
   activeProject,
   hostStatus,
@@ -70,6 +73,7 @@ export function Toolbar({
   onUndo,
   onRedo,
   onSetCameraMode,
+  onTogglePhysicsDebug,
   onStartHost,
   onRestartHost,
   onResetLayout,
@@ -77,6 +81,30 @@ export function Toolbar({
   const [newPopoverOpen, setNewPopoverOpen] = useState(false);
   const [newSceneName, setNewSceneName] = useState("Untitled Scene");
   const [newWorldMode, setNewWorldMode] = useState<WorldMode>("3d");
+  const newMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!newPopoverOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !newMenuRef.current?.contains(event.target)
+      ) {
+        setNewPopoverOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setNewPopoverOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [newPopoverOpen]);
 
   const projectOptions = [...samples];
   if (
@@ -145,19 +173,20 @@ export function Toolbar({
         <button
           type="button"
           disabled={busy}
-          title="Browse project directory"
+          title="Open project directory"
           onClick={onBrowseProject}
         >
           <FolderOpen size={14} />
-          Project...
+          Project
         </button>
 
         <div className="toolbar-divider" />
 
-        <div className="popover-anchor">
+        <div className="popover-anchor" ref={newMenuRef}>
           <button
             type="button"
             disabled={busy || !hostRunning}
+            title="Create new scene"
             onClick={() => {
               setNewWorldMode(cameraMode === "2d" ? "2d" : "3d");
               setNewPopoverOpen((open) => !open);
@@ -212,7 +241,7 @@ export function Toolbar({
           onClick={() => onOpenScene()}
         >
           <FolderOpen size={14} />
-          Open Scene
+          Open
         </button>
 
         <button
@@ -230,10 +259,10 @@ export function Toolbar({
           type="button"
           disabled={busy || !hostRunning}
           title="Save active scene to a new .level.ron file"
+          aria-label="Save As"
           onClick={onSaveSceneAs}
         >
           <SaveAll size={14} />
-          Save As
         </button>
 
         <div className="toolbar-divider" />
@@ -246,10 +275,10 @@ export function Toolbar({
               ? `Undo: ${historyState.undo_label} (Ctrl+Z)`
               : "Undo (Ctrl+Z)"
           }
+          aria-label="Undo"
           onClick={onUndo}
         >
           <Undo2 size={14} />
-          Undo
         </button>
 
         <button
@@ -260,14 +289,14 @@ export function Toolbar({
               ? `Redo: ${historyState.redo_label} (Ctrl+Y)`
               : "Redo (Ctrl+Shift+Z / Ctrl+Y)"
           }
+          aria-label="Redo"
           onClick={onRedo}
         >
           <Redo2 size={14} />
-          Redo
         </button>
       </div>
 
-      <div className="toolbar-section">
+      <div className="toolbar-section toolbar-right">
         <span className="scene-label" title={sceneName}>
           {sceneName}
           {sceneDirty ? " *" : ""}
@@ -295,12 +324,19 @@ export function Toolbar({
         <div className="toolbar-divider" />
 
         {hostRunning && brpClient && (
-          <GameplayControls key={projectKey} client={brpClient} />
+          <GameplayControls
+            key={projectKey}
+            client={brpClient}
+            physicsDebug={physicsDebug}
+            onTogglePhysicsDebug={onTogglePhysicsDebug}
+          />
         )}
-        <span className={`badge ${connectionClass}`}>{connectionLabel}</span>
+        <span className={`badge ${connectionClass}`} title={`Engine Host: ${connectionLabel}`}>
+          {connectionLabel}
+        </span>
         <span className="metric-pill" title="Viewport FPS / Scene entities">
           {metrics.fps > 0 ? `${metrics.fps.toFixed(0)} FPS` : "-- FPS"} ·{" "}
-          {metrics.scene_entity_count} entities
+          {metrics.scene_entity_count}
         </span>
 
         {hostStatus.state === "stopped" || hostStatus.state === "crashed" ? (
@@ -311,23 +347,24 @@ export function Toolbar({
             onClick={onStartHost}
           >
             <Play size={13} />
-            Start Host
+            Start
           </button>
         ) : (
           <button
             type="button"
             disabled={busy}
             title="Restart Engine Host"
+            aria-label="Restart Engine Host"
             onClick={onRestartHost}
           >
             <RotateCw size={13} />
-            Restart
           </button>
         )}
 
         <button
           type="button"
           title="Reset docking panels to default sizes"
+          aria-label="Reset Layout"
           onClick={onResetLayout}
         >
           <LayoutGrid size={13} />

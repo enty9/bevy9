@@ -26,6 +26,7 @@ use bevy_picking::{
 };
 use bevy_transform::components::{GlobalTransform, Transform};
 use engine_core::{EntityGuid, EntityGuidMap};
+use engine_physics::{Collider2D, Collider3D};
 use engine_protocol::{ViewportCameraMode, ViewportMode};
 use engine_render::{
     camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
@@ -106,13 +107,25 @@ type HelperEntityItem<'a> = (
     Option<&'a Visibility>,
     Option<&'a InheritedVisibility>,
     Option<&'a Pickable>,
-    Has<SceneDirectionalLight>,
-    Has<ScenePointLight>,
-    Has<SceneCamera3d>,
-    Has<SceneCamera2d>,
+    (
+        Has<SceneDirectionalLight>,
+        Has<ScenePointLight>,
+        Has<SceneCamera3d>,
+        Has<SceneCamera2d>,
+    ),
+    (
+        Has<MeshPrimitive3d>,
+        Has<MeshPrimitive2d>,
+        Has<SpriteDesc>,
+        Has<SceneGltfModel>,
+        Has<SceneTilemap>,
+    ),
+    Option<&'a Collider3D>,
+    Option<&'a Collider2D>,
 );
 
-/// Picking backend for non-mesh editor helper icons (`DirectionalLight`, `PointLight`, `Camera3d`, `Camera2d`).
+/// Picking backend for non-mesh editor helper icons (`DirectionalLight`, `PointLight`, `Camera3d`, `Camera2d`)
+/// and collider-only entities without visual geometry.
 pub(crate) fn helper_icon_picking_backend(
     ray_map: Res<RayMap>,
     cameras: Query<(&Camera, &Projection, &GlobalTransform)>,
@@ -137,13 +150,19 @@ pub(crate) fn helper_icon_picking_backend(
             vis,
             inherited,
             pickable,
-            has_dir_light,
-            has_point_light,
-            has_cam3d,
-            has_cam2d,
+            (has_dir_light, has_point_light, has_cam3d, has_cam2d),
+            (has_mesh3d, has_mesh2d, has_sprite, has_gltf, has_tilemap),
+            collider3d,
+            collider2d,
         ) in &helpers
         {
-            if !has_dir_light && !has_point_light && !has_cam3d && !has_cam2d {
+            let is_light_or_camera =
+                has_dir_light || has_point_light || has_cam3d || has_cam2d;
+            let has_visual =
+                has_mesh3d || has_mesh2d || has_sprite || has_gltf || has_tilemap;
+            if !is_light_or_camera
+                && (has_visual || (collider3d.is_none() && collider2d.is_none()))
+            {
                 continue;
             }
             if pickable.is_some_and(|p| !p.is_hoverable) {
@@ -156,21 +175,43 @@ pub(crate) fn helper_icon_picking_backend(
             let center = global_tfm.translation();
             match projection {
                 Projection::Perspective(_) => {
-                    let dist = center.distance(cam_pos).max(0.5);
-                    let radius = (dist * 0.045).clamp(0.18, 1.5);
-                    if let Some(t) = ray_sphere_intersect(ray.origin, *ray.direction, center, radius)
-                    {
-                        let hit_pos = ray.origin + *ray.direction * t;
-                        picks.push((
-                            entity,
-                            HitData::new(ray_id.camera, t, Some(hit_pos), Some(-*ray.direction)),
-                        ));
+                    if is_light_or_camera {
+                        let dist = center.distance(cam_pos).max(0.5);
+                        let radius = (dist * 0.045).clamp(0.18, 1.5);
+                        if let Some(t) =
+                            ray_sphere_intersect(ray.origin, *ray.direction, center, radius)
+                        {
+                            let hit_pos = ray.origin + *ray.direction * t;
+                            picks.push((
+                                entity,
+                                HitData::new(
+                                    ray_id.camera,
+                                    t,
+                                    Some(hit_pos),
+                                    Some(-*ray.direction),
+                                ),
+                            ));
+                        }
+                    } else if let Some(col3d) = collider3d {
+                        let local_from_world = global_tfm.affine().inverse();
+                        let local_origin = local_from_world.transform_point3(ray.origin);
+                        let local_dir = local_from_world.transform_vector3(*ray.direction);
+                        let half = collider3d_local_half_extents(col3d);
+                        if let Some(t) = ray_local_aabb_intersect(local_origin, local_dir, half) {
+                            let hit_pos = ray.origin + *ray.direction * t;
+                            picks.push((
+                                entity,
+                                HitData::new(
+                                    ray_id.camera,
+                                    t,
+                                    Some(hit_pos),
+                                    Some(-*ray.direction),
+                                ),
+                            ));
+                        }
                     }
                 }
                 Projection::Orthographic(ortho) => {
-                    if !has_cam2d && !has_dir_light && !has_point_light {
-                        continue;
-                    }
                     let dir_z = ray.direction.z;
                     if dir_z.abs() <= 1e-5 {
                         continue;
@@ -180,12 +221,28 @@ pub(crate) fn helper_icon_picking_backend(
                         continue;
                     }
                     let hit_pos = ray.origin + *ray.direction * t;
-                    let half = (20.0 * ortho.scale).clamp(6.0, 200.0);
-                    if (hit_pos.x - center.x).abs() <= half && (hit_pos.y - center.y).abs() <= half {
-                        picks.push((
-                            entity,
-                            HitData::new(ray_id.camera, t, Some(hit_pos), Some(Vec3::Z)),
-                        ));
+                    if is_light_or_camera {
+                        if !has_cam2d && !has_dir_light && !has_point_light {
+                            continue;
+                        }
+                        let half = (20.0 * ortho.scale).clamp(6.0, 200.0);
+                        if (hit_pos.x - center.x).abs() <= half
+                            && (hit_pos.y - center.y).abs() <= half
+                        {
+                            picks.push((
+                                entity,
+                                HitData::new(ray_id.camera, t, Some(hit_pos), Some(Vec3::Z)),
+                            ));
+                        }
+                    } else if let Some(col2d) = collider2d {
+                        let local_hit = global_tfm.affine().inverse().transform_point3(hit_pos);
+                        let half = collider2d_local_half_extents(col2d);
+                        if local_hit.x.abs() <= half.x && local_hit.y.abs() <= half.y {
+                            picks.push((
+                                entity,
+                                HitData::new(ray_id.camera, t, Some(hit_pos), Some(Vec3::Z)),
+                            ));
+                        }
                     }
                 }
                 Projection::Custom(_) => {}
@@ -433,6 +490,8 @@ type SceneOverlayItem<'a> = (
     Option<&'a SpriteDesc>,
     Option<&'a SceneGltfModel>,
     Option<&'a SceneTilemap>,
+    Option<&'a Collider3D>,
+    Option<&'a Collider2D>,
     Option<&'a SceneDirectionalLight>,
     Option<&'a ScenePointLight>,
     Option<&'a SceneCamera3d>,
@@ -463,6 +522,8 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
         sprite_desc,
         gltf_model,
         tilemap,
+        collider3d,
+        collider2d,
         dir_light,
         point_light,
         cam3d,
@@ -547,17 +608,18 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
 
                 if is_selected || is_hovered {
                     let outline_color = if is_selected { selected_color } else { hover_color };
+                    let is_helper = dir_light.is_some()
+                        || point_light.is_some()
+                        || cam3d.is_some()
+                        || cam2d.is_some();
                     let half = entity_local_half_extents_3d(
                         mesh3d,
                         mesh2d,
                         sprite_desc,
                         gltf_model,
                         tilemap,
-                        dir_light.is_some()
-                            || point_light.is_some()
-                            || cam3d.is_some()
-                            || cam2d.is_some(),
-                        icon_scale_3d,
+                        collider3d,
+                        is_helper.then_some(icon_scale_3d),
                     );
                     draw_oriented_box_3d(&mut gizmos, global_tfm, half, outline_color);
                 }
@@ -595,6 +657,7 @@ pub(crate) fn draw_editor_helper_icons_and_selection(
                         mesh2d,
                         sprite_desc,
                         tilemap,
+                        collider2d,
                         cam2d.is_some() || dir_light.is_some() || point_light.is_some(),
                     );
                     draw_oriented_rect_2d(&mut gizmos, global_tfm, half, outline_color);
@@ -621,14 +684,84 @@ fn ray_sphere_intersect(origin: Vec3, dir: Vec3, center: Vec3, radius: f32) -> O
     Some((-b - disc.sqrt()).max(0.0))
 }
 
+fn ray_local_aabb_intersect(origin: Vec3, dir: Vec3, half: Vec3) -> Option<f32> {
+    let mut tmin = 0.0_f32;
+    let mut tmax = f32::INFINITY;
+    for axis in 0..3 {
+        let o = origin[axis];
+        let d = dir[axis];
+        let h = half[axis];
+        if d.abs() <= 1e-8 {
+            if o < -h || o > h {
+                return None;
+            }
+        } else {
+            let inv = 1.0 / d;
+            let mut t1 = (-h - o) * inv;
+            let mut t2 = (h - o) * inv;
+            if t1 > t2 {
+                core::mem::swap(&mut t1, &mut t2);
+            }
+            tmin = tmin.max(t1);
+            tmax = tmax.min(t2);
+            if tmin > tmax {
+                return None;
+            }
+        }
+    }
+    Some(tmin)
+}
+
+fn collider3d_local_half_extents(collider: &Collider3D) -> Vec3 {
+    match collider {
+        Collider3D::Cuboid(half) => half.abs().max(Vec3::splat(0.02)),
+        Collider3D::Ball(r) => Vec3::splat(r.abs().max(0.02)),
+        Collider3D::Capsule(half_seg, r) => {
+            let r = r.abs().max(0.02);
+            Vec3::new(r, half_seg.abs() + r, r)
+        }
+        Collider3D::Cylinder(half_h, r) => {
+            let r = r.abs().max(0.02);
+            Vec3::new(r, half_h.abs().max(0.02), r)
+        }
+        Collider3D::ConvexHull(pts) => pts
+            .iter()
+            .fold(Vec3::ZERO, |acc, v| acc.max(v.abs()))
+            .max(Vec3::splat(0.05)),
+        Collider3D::TriMesh { vertices, .. } => vertices
+            .iter()
+            .fold(Vec3::ZERO, |acc, v| acc.max(v.abs()))
+            .max(Vec3::splat(0.05)),
+        Collider3D::Heightfield { scale, .. } => (scale.abs() * 0.5).max(Vec3::splat(0.05)),
+    }
+}
+
+fn collider2d_local_half_extents(collider: &Collider2D) -> Vec2 {
+    match collider {
+        Collider2D::Cuboid(half) => half.abs().max(Vec2::splat(2.0)),
+        Collider2D::Ball(r) => Vec2::splat(r.abs().max(2.0)),
+        Collider2D::Capsule(half_seg, r) => {
+            let r = r.abs().max(2.0);
+            Vec2::new(r, half_seg.abs() + r)
+        }
+        Collider2D::Segment(a, b) => Vec2::new(a.x.abs().max(b.x.abs()), a.y.abs().max(b.y.abs()))
+            .max(Vec2::splat(4.0)),
+        Collider2D::ConvexPolygon(pts) | Collider2D::Polyline(pts) => pts
+            .iter()
+            .fold(Vec2::ZERO, |acc, v| acc.max(v.abs()))
+            .max(Vec2::splat(4.0)),
+        Collider2D::TilemapCollider { tile_scale, .. } => Vec2::splat(48.0 * tile_scale.max(0.1)),
+    }
+}
+
 fn entity_local_half_extents_3d(
     mesh3d: Option<&MeshPrimitive3d>,
     mesh2d: Option<&MeshPrimitive2d>,
     sprite_desc: Option<&SpriteDesc>,
     gltf_model: Option<&SceneGltfModel>,
     tilemap: Option<&SceneTilemap>,
-    is_helper: bool,
-    helper_scale: f32,
+    collider3d: Option<&Collider3D>,
+    helper_scale: Option<f32>,
 ) -> Vec3 {
     if let Some(prim) = mesh3d {
         return match *prim {
@@ -657,8 +790,11 @@ fn entity_local_half_extents_3d(
         let s = 48.0 * tm.tile_scale.max(0.1);
         return Vec3::new(s, s, 0.05);
     }
-    if is_helper {
-        return Vec3::splat(helper_scale * 1.1);
+    if let Some(col) = collider3d {
+        return collider3d_local_half_extents(col) + Vec3::splat(0.02);
+    }
+    if let Some(scale) = helper_scale {
+        return Vec3::splat(scale * 1.1);
     }
     Vec3::splat(0.25)
 }
@@ -667,6 +803,7 @@ fn entity_local_half_extents_2d(
     mesh2d: Option<&MeshPrimitive2d>,
     sprite_desc: Option<&SpriteDesc>,
     tilemap: Option<&SceneTilemap>,
+    collider2d: Option<&Collider2D>,
     is_helper: bool,
 ) -> Vec2 {
     if let Some(prim) = mesh2d {
@@ -681,6 +818,9 @@ fn entity_local_half_extents_2d(
     }
     if let Some(tm) = tilemap {
         return Vec2::splat(48.0 * tm.tile_scale.max(0.1));
+    }
+    if let Some(col) = collider2d {
+        return collider2d_local_half_extents(col) + Vec2::splat(3.0);
     }
     if is_helper {
         return Vec2::splat(22.0);

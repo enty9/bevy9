@@ -8,6 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
+  Box,
   ChevronDown,
   ExternalLink,
   Magnet,
@@ -45,10 +46,12 @@ interface ViewportPanelProps {
   height: number;
   ipcState: IpcConnectionState;
   gizmoState: GizmoStatePayload;
+  physicsDebug?: boolean;
   assets?: AssetRecord[];
   subscribeFrames: FrameSubscriber;
   onViewportInput: (event: ViewportInputEvent) => void;
   onToggleViewportMode: () => void;
+  onTogglePhysicsDebug?: (enabled: boolean) => void;
   onChangeGizmoState: (next: GizmoStatePayload) => void;
   onDropAsset?: (asset: AssetRecord, viewportX: number, viewportY: number) => void;
 }
@@ -92,10 +95,12 @@ export function ViewportPanel({
   height,
   ipcState,
   gizmoState,
+  physicsDebug = false,
   assets,
   subscribeFrames,
   onViewportInput,
   onToggleViewportMode,
+  onTogglePhysicsDebug,
   onChangeGizmoState,
   onDropAsset,
 }: ViewportPanelProps) {
@@ -441,10 +446,10 @@ export function ViewportPanel({
   return (
     <div className="panel">
       <div className="panel-header">
-        <div className="panel-actions">
-          <span>Viewport · {sceneName}</span>
+        <div className="panel-actions viewport-title-group">
+          <span className="truncate">Viewport · {sceneName}</span>
           <span className="badge">{cameraMode.toUpperCase()}</span>
-          <span className="muted">
+          <span className="muted viewport-res-label">
             {canvasSize.width}×{canvasSize.height}
           </span>
         </div>
@@ -570,6 +575,19 @@ export function ViewportPanel({
               </div>
             )}
           </div>
+
+          {onTogglePhysicsDebug && (
+            <button
+              type="button"
+              className={physicsDebug ? "primary" : ""}
+              disabled={ipcState !== "connected"}
+              title="Toggle physics collider wireframes in viewport"
+              onClick={() => onTogglePhysicsDebug(!physicsDebug)}
+            >
+              <Box size={13} />
+              Colliders
+            </button>
+          )}
 
           <button
             type="button"

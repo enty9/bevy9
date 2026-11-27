@@ -339,3 +339,41 @@ fn editor_debug_sync_does_not_advance_authored_transforms() {
         Some(Vec3::ZERO)
     );
 }
+
+#[test]
+fn editor_debug_sync_updates_collider_on_same_post_update_and_clears_when_disabled() {
+    let mut app = harness();
+    app.insert_resource(PhysicsOptions {
+        simulate: false,
+        debug: true,
+    });
+    let e = app
+        .world_mut()
+        .spawn((Transform::from_xyz(0., 2., 0.), Collider3D::Ball(0.5)))
+        .id();
+
+    app.world_mut().run_schedule(PostUpdate);
+    assert_eq!(
+        app.world().resource::<PhysicsWorld3D>().linear_velocity(e),
+        Some(Vec3::ZERO)
+    );
+
+    {
+        let mut entity_mut = app.world_mut().entity_mut(e);
+        entity_mut.get_mut::<Transform>().unwrap().translation.y = 4.;
+        *entity_mut.get_mut::<Collider3D>().unwrap() = Collider3D::Cuboid(Vec3::ONE);
+    }
+    app.world_mut().run_schedule(PostUpdate);
+    assert_eq!(app.world().get::<Transform>(e).unwrap().translation.y, 4.);
+    assert_eq!(
+        app.world().resource::<PhysicsWorld3D>().linear_velocity(e),
+        Some(Vec3::ZERO)
+    );
+
+    app.world_mut().resource_mut::<PhysicsOptions>().debug = false;
+    app.world_mut().run_schedule(PostUpdate);
+    assert_eq!(
+        app.world().resource::<PhysicsWorld3D>().linear_velocity(e),
+        None
+    );
+}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
-import { RotateCcw, X } from "lucide-react";
+import { Plus, RotateCcw, Trash2, X } from "lucide-react";
 import {
   clearDraggedAsset,
   isAssetDragActive,
@@ -18,6 +18,11 @@ import type {
   BrpRegistrySchema,
   BrpSchemaType,
 } from "../protocol/types";
+
+export interface SceneEntityOption {
+  guid: string;
+  name: string;
+}
 
 interface NumericInputProps {
   value: number;
@@ -109,12 +114,14 @@ export function NumericInput({
 interface VectorRowProps {
   axes: readonly string[];
   values: number[];
+  step?: number;
+  min?: number;
   onChange: (next: number[], immediate?: boolean) => void;
 }
 
 const AXIS_CLASSES = ["axis-x", "axis-y", "axis-z", "axis-w"] as const;
 
-function VectorRow({ axes, values, onChange }: VectorRowProps) {
+function VectorRow({ axes, values, step = 0.05, min, onChange }: VectorRowProps) {
   return (
     <div className="vec-row">
       {axes.map((axis, idx) => (
@@ -122,7 +129,8 @@ function VectorRow({ axes, values, onChange }: VectorRowProps) {
           <span className={`vec-tag ${AXIS_CLASSES[idx] ?? ""}`}>{axis}</span>
           <NumericInput
             value={typeof values[idx] === "number" ? values[idx] : 0}
-            step={0.05}
+            step={step}
+            min={min}
             onChange={(nextVal) => {
               const copy = axes.map((_, i) =>
                 typeof values[i] === "number" ? values[i] : 0,
@@ -253,6 +261,9 @@ function inferAssetKindFilter(
   if (parentTypePath?.includes("SceneTilemap")) {
     return "tilemap";
   }
+  if (parentTypePath?.includes("Collider2D") && fieldLabel === "asset") {
+    return "tilemap";
+  }
   if (fieldLabel?.includes("prefab")) {
     return "prefab";
   }
@@ -324,7 +335,7 @@ function AssetSlotField({
   };
 
   return (
-    <div className="prop-row">
+    <div className={label ? "prop-row" : "prop-row prop-row-full"}>
       {label && <span className="prop-label">{label}</span>}
       <div
         className={`asset-slot-control prop-control ${dropActive ? "drop-active" : ""}`}
@@ -378,7 +389,573 @@ interface SchemaFieldProps {
   value: unknown;
   schema: BrpRegistrySchema | null;
   assets?: AssetRecord[];
+  sceneEntities?: SceneEntityOption[];
+  currentEntityGuid?: string;
   onChange: (next: unknown, immediate?: boolean) => void;
+}
+
+function formatNumCompact(n: number): string {
+  if (!Number.isFinite(n)) return "0";
+  return String(Math.round(n * 1000) / 1000);
+}
+
+interface CollisionLayersFieldProps {
+  value: unknown;
+  onChange: (next: unknown, immediate?: boolean) => void;
+}
+
+function LayerMaskRow({
+  label,
+  mask,
+  onChange,
+}: {
+  label: string;
+  mask: number;
+  onChange: (nextMask: number) => void;
+}) {
+  const unsignedMask = mask >>> 0;
+  return (
+    <div className="layer-mask-block">
+      <div className="layer-mask-header">
+        <span className="prop-label">{label}</span>
+        <div className="panel-actions">
+          <code className="cb-mono muted">
+            0x{unsignedMask.toString(16).toUpperCase().padStart(8, "0")}
+          </code>
+          <button
+            type="button"
+            className="ghost-btn icon-mini"
+            onClick={() => onChange(4294967295)}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className="ghost-btn icon-mini"
+            onClick={() => onChange(0)}
+          >
+            None
+          </button>
+        </div>
+      </div>
+      <div className="layer-bit-grid">
+        {Array.from({ length: 16 }, (_, bit) => {
+          const active = ((unsignedMask >>> bit) & 1) === 1;
+          return (
+            <button
+              key={bit}
+              type="button"
+              className={`layer-bit-btn ${active ? "active" : ""}`}
+              title={`Layer ${bit + 1} (bit ${bit})`}
+              onClick={() => onChange((unsignedMask ^ (1 << bit)) >>> 0)}
+            >
+              {bit + 1}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function CollisionLayersField({ value, onChange }: CollisionLayersFieldProps) {
+  const obj =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)
+      : {};
+  const memberships =
+    typeof obj.memberships === "number" ? obj.memberships >>> 0 : 4294967295;
+  const filter =
+    typeof obj.filter === "number" ? obj.filter >>> 0 : 4294967295;
+
+  return (
+    <div className="struct-fields">
+      <LayerMaskRow
+        label="Memberships"
+        mask={memberships}
+        onChange={(nextMask) =>
+          onChange({ memberships: nextMask, filter }, true)
+        }
+      />
+      <LayerMaskRow
+        label="Filter"
+        mask={filter}
+        onChange={(nextMask) =>
+          onChange({ memberships, filter: nextMask }, true)
+        }
+      />
+    </div>
+  );
+}
+
+interface ColliderFieldProps {
+  is3d: boolean;
+  typePath: string;
+  value: unknown;
+  schema: BrpRegistrySchema | null;
+  assets: AssetRecord[];
+  onChange: (next: unknown, immediate?: boolean) => void;
+}
+
+function ColliderField({
+  is3d,
+  typePath,
+  value,
+  schema,
+  assets,
+  onChange,
+}: ColliderFieldProps) {
+  const def = schema?.[typePath];
+  const variants =
+    def?.kind === "Enum" && Array.isArray(def.oneOf)
+      ? def.oneOf.filter((v): v is BrpSchemaType => typeof v !== "string")
+      : [];
+
+  let activeVariantName = variants[0]?.shortPath ?? "Cuboid";
+  if (typeof value === "string") {
+    activeVariantName = value;
+  } else if (value && typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>);
+    if (keys.length > 0) {
+      activeVariantName = keys[0];
+    }
+  }
+  const payload =
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)[activeVariantName]
+      : undefined;
+  const minDim = is3d ? 0.001 : 0.5;
+  const dimStep = is3d ? 0.05 : 1;
+
+  function renderShapeBody() {
+    switch (activeVariantName) {
+      case "Cuboid": {
+        const arr = Array.isArray(payload)
+          ? (payload as number[])
+          : is3d
+            ? [0.5, 0.5, 0.5]
+            : [32, 32];
+        const axes = is3d ? (["X", "Y", "Z"] as const) : (["X", "Y"] as const);
+        return (
+          <>
+            <div className="prop-row">
+              <span className="prop-label">Half Extents</span>
+              <VectorRow
+                axes={axes}
+                values={arr}
+                step={dimStep}
+                min={minDim}
+                onChange={(next) => onChange({ Cuboid: next })}
+              />
+            </div>
+            <div className="collider-meta-note">
+              Full size:{" "}
+              {axes
+                .map((_, idx) =>
+                  formatNumCompact((typeof arr[idx] === "number" ? arr[idx] : 0) * 2),
+                )
+                .join(" × ")}
+              {is3d ? " m" : " px"}
+            </div>
+          </>
+        );
+      }
+      case "Ball": {
+        const radius = typeof payload === "number" ? payload : is3d ? 0.5 : 32;
+        return (
+          <>
+            <div className="prop-row">
+              <span className="prop-label">Radius</span>
+              <NumericInput
+                value={radius}
+                step={dimStep}
+                min={minDim}
+                onChange={(next) => onChange({ Ball: next })}
+              />
+            </div>
+            <div className="collider-meta-note">
+              Diameter: {formatNumCompact(radius * 2)}
+              {is3d ? " m" : " px"}
+            </div>
+          </>
+        );
+      }
+      case "Capsule":
+      case "Cylinder": {
+        const arr = Array.isArray(payload)
+          ? (payload as number[])
+          : [is3d ? 0.5 : 24, is3d ? 0.35 : 16];
+        const firstVal = typeof arr[0] === "number" ? arr[0] : 0.5;
+        const radiusVal = typeof arr[1] === "number" ? arr[1] : 0.35;
+        const firstLabel =
+          activeVariantName === "Capsule" ? "Half Segment" : "Half Height";
+        const totalHeight =
+          activeVariantName === "Capsule"
+            ? (firstVal + radiusVal) * 2
+            : firstVal * 2;
+        return (
+          <>
+            <div className="prop-row">
+              <span className="prop-label">{firstLabel}</span>
+              <NumericInput
+                value={firstVal}
+                step={dimStep}
+                min={minDim}
+                onChange={(next) =>
+                  onChange({ [activeVariantName]: [next, radiusVal] })
+                }
+              />
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Radius</span>
+              <NumericInput
+                value={radiusVal}
+                step={dimStep}
+                min={minDim}
+                onChange={(next) =>
+                  onChange({ [activeVariantName]: [firstVal, next] })
+                }
+              />
+            </div>
+            <div className="collider-meta-note">
+              Height: {formatNumCompact(totalHeight)} · Diameter:{" "}
+              {formatNumCompact(radiusVal * 2)}
+              {is3d ? " m" : " px"}
+            </div>
+          </>
+        );
+      }
+      case "Segment": {
+        const pair = Array.isArray(payload) ? payload : [[-32, 0], [32, 0]];
+        const ptA = Array.isArray(pair[0]) ? (pair[0] as number[]) : [-32, 0];
+        const ptB = Array.isArray(pair[1]) ? (pair[1] as number[]) : [32, 0];
+        return (
+          <>
+            <div className="prop-row">
+              <span className="prop-label">Point A</span>
+              <VectorRow
+                axes={["X", "Y"]}
+                values={ptA}
+                step={1}
+                onChange={(nextA) => onChange({ Segment: [nextA, ptB] })}
+              />
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Point B</span>
+              <VectorRow
+                axes={["X", "Y"]}
+                values={ptB}
+                step={1}
+                onChange={(nextB) => onChange({ Segment: [ptA, nextB] })}
+              />
+            </div>
+          </>
+        );
+      }
+      case "TilemapCollider": {
+        const obj =
+          payload && typeof payload === "object"
+            ? (payload as Record<string, unknown>)
+            : {};
+        const assetUuid =
+          typeof obj.asset === "string"
+            ? obj.asset
+            : "00000000-0000-0000-0000-000000000000";
+        const tileScale =
+          typeof obj.tile_scale === "number" ? obj.tile_scale : 1.0;
+        return (
+          <>
+            <AssetSlotField
+              label="Tilemap"
+              isOptional={false}
+              value={assetUuid}
+              assets={assets}
+              kindFilter="tilemap"
+              onChange={(nextAsset, immediate) =>
+                onChange(
+                  {
+                    TilemapCollider: {
+                      asset: nextAsset,
+                      tile_scale: tileScale,
+                    },
+                  },
+                  immediate,
+                )
+              }
+            />
+            <div className="prop-row">
+              <span className="prop-label">Tile Scale</span>
+              <NumericInput
+                value={tileScale}
+                step={0.1}
+                min={0.01}
+                onChange={(nextScale) =>
+                  onChange({
+                    TilemapCollider: {
+                      asset: assetUuid,
+                      tile_scale: nextScale,
+                    },
+                  })
+                }
+              />
+            </div>
+          </>
+        );
+      }
+      case "ConvexPolygon":
+      case "Polyline":
+      case "ConvexHull": {
+        const pts = Array.isArray(payload) ? (payload as number[][]) : [];
+        const minPoints =
+          activeVariantName === "ConvexHull"
+            ? 4
+            : activeVariantName === "ConvexPolygon"
+              ? 3
+              : 2;
+        const axes = is3d ? (["X", "Y", "Z"] as const) : (["X", "Y"] as const);
+        return (
+          <div className="vertex-list">
+            <div className="layer-mask-header">
+              <span className="collider-meta-note">
+                {pts.length} vertices (min {minPoints})
+              </span>
+              <button
+                type="button"
+                className="ghost-btn icon-mini"
+                onClick={() => {
+                  const last = pts[pts.length - 1] ?? (is3d ? [0, 0, 0] : [0, 0]);
+                  const nextPt = [...last];
+                  nextPt[0] = (nextPt[0] ?? 0) + (is3d ? 0.5 : 16);
+                  onChange({ [activeVariantName]: [...pts, nextPt] }, true);
+                }}
+              >
+                <Plus size={11} /> Point
+              </button>
+            </div>
+            {pts.map((pt, idx) => (
+              <div key={idx} className="vertex-row">
+                <span className="muted" style={{ width: 22 }}>
+                  #{idx}
+                </span>
+                <VectorRow
+                  axes={axes}
+                  values={Array.isArray(pt) ? pt : []}
+                  step={dimStep}
+                  onChange={(nextPt) => {
+                    const next = pts.map((p, i) => (i === idx ? nextPt : p));
+                    onChange({ [activeVariantName]: next });
+                  }}
+                />
+                <button
+                  type="button"
+                  className="ghost-btn icon-mini"
+                  disabled={pts.length <= minPoints}
+                  title="Remove vertex"
+                  onClick={() => {
+                    const next = pts.filter((_, i) => i !== idx);
+                    onChange({ [activeVariantName]: next }, true);
+                  }}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+        );
+      }
+      case "TriMesh": {
+        const obj =
+          payload && typeof payload === "object"
+            ? (payload as Record<string, unknown>)
+            : {};
+        const vertices = Array.isArray(obj.vertices)
+          ? (obj.vertices as number[][])
+          : [];
+        const indices = Array.isArray(obj.indices)
+          ? (obj.indices as number[][])
+          : [];
+        return (
+          <div className="vertex-list">
+            <div className="collider-meta-note">
+              {vertices.length} vertices · {indices.length} triangles
+            </div>
+            <div className="layer-mask-header">
+              <span className="prop-label">Vertices</span>
+              <button
+                type="button"
+                className="ghost-btn icon-mini"
+                onClick={() =>
+                  onChange(
+                    {
+                      TriMesh: {
+                        vertices: [...vertices, [0, 0, 0]],
+                        indices,
+                      },
+                    },
+                    true,
+                  )
+                }
+              >
+                <Plus size={11} /> Vertex
+              </button>
+            </div>
+            {vertices.map((v, idx) => (
+              <div key={idx} className="vertex-row">
+                <span className="muted" style={{ width: 22 }}>
+                  v{idx}
+                </span>
+                <VectorRow
+                  axes={["X", "Y", "Z"]}
+                  values={Array.isArray(v) ? v : []}
+                  step={0.05}
+                  onChange={(nextV) => {
+                    const nextVerts = vertices.map((item, i) =>
+                      i === idx ? nextV : item,
+                    );
+                    onChange({
+                      TriMesh: { vertices: nextVerts, indices },
+                    });
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        );
+      }
+      case "Heightfield": {
+        const obj =
+          payload && typeof payload === "object"
+            ? (payload as Record<string, unknown>)
+            : {};
+        const rows =
+          typeof obj.rows === "number" ? Math.max(2, Math.floor(obj.rows)) : 2;
+        const columns =
+          typeof obj.columns === "number"
+            ? Math.max(2, Math.floor(obj.columns))
+            : 2;
+        const heights = Array.isArray(obj.heights)
+          ? (obj.heights as number[])
+          : [0, 0, 0, 0];
+        const scale = Array.isArray(obj.scale)
+          ? (obj.scale as number[])
+          : [2, 1, 2];
+
+        function updateGrid(nextRows: number, nextCols: number) {
+          const total = nextRows * nextCols;
+          const nextHeights = Array.from({ length: total }, (_, idx) =>
+            typeof heights[idx] === "number" ? heights[idx] : 0,
+          );
+          onChange(
+            {
+              Heightfield: {
+                rows: nextRows,
+                columns: nextCols,
+                heights: nextHeights,
+                scale,
+              },
+            },
+            true,
+          );
+        }
+
+        return (
+          <div className="struct-fields">
+            <div className="prop-row">
+              <span className="prop-label">Rows</span>
+              <NumericInput
+                value={rows}
+                step={1}
+                min={2}
+                max={64}
+                onChange={(n) => updateGrid(Math.max(2, Math.round(n)), columns)}
+              />
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Columns</span>
+              <NumericInput
+                value={columns}
+                step={1}
+                min={2}
+                max={64}
+                onChange={(n) => updateGrid(rows, Math.max(2, Math.round(n)))}
+              />
+            </div>
+            <div className="prop-row">
+              <span className="prop-label">Scale</span>
+              <VectorRow
+                axes={["X", "Y", "Z"]}
+                values={scale}
+                step={0.1}
+                min={0.01}
+                onChange={(nextScale) =>
+                  onChange({
+                    Heightfield: { rows, columns, heights, scale: nextScale },
+                  })
+                }
+              />
+            </div>
+            <div className="collider-meta-note">
+              Height samples: {rows} × {columns} ({heights.length} entries)
+            </div>
+          </div>
+        );
+      }
+      default:
+        return (
+          <pre className="json-preview">{JSON.stringify(value, null, 2)}</pre>
+        );
+    }
+  }
+
+  return (
+    <div className="enum-complex-block">
+      {variants.length > 0 && (
+        <div className="prop-row">
+          <span className="prop-label">Shape</span>
+          <select
+            className="select-input prop-control"
+            value={activeVariantName}
+            onChange={(e) => {
+              const chosen = variants.find(
+                (v) => v.shortPath === e.target.value,
+              );
+              if (!chosen) return;
+              const next = buildDefaultValueForVariant(
+                chosen,
+                schema,
+                0,
+                typePath,
+              );
+              if (
+                chosen.shortPath === "TilemapCollider" &&
+                next &&
+                typeof next === "object"
+              ) {
+                const firstTilemap = assets.find((a) => a.kind === "tilemap");
+                if (firstTilemap) {
+                  const rec = next as {
+                    TilemapCollider: { asset: string; tile_scale: number };
+                  };
+                  rec.TilemapCollider.asset = firstTilemap.uuid;
+                }
+              }
+              onChange(next, true);
+            }}
+          >
+            {variants.map((variant) => {
+              const name = variant.shortPath ?? "Variant";
+              return (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+      )}
+      <div className="nested-indent">{renderShapeBody()}</div>
+    </div>
+  );
 }
 
 export function SchemaField({
@@ -388,9 +965,53 @@ export function SchemaField({
   value,
   schema,
   assets,
+  sceneEntities,
+  currentEntityGuid,
   onChange,
 }: SchemaFieldProps) {
   const def: BrpSchemaType | undefined = schema?.[typePath];
+  const propRowClass = label ? "prop-row" : "prop-row prop-row-full";
+
+  // Dedicated marker components
+  if (
+    typePath === "engine_physics::TriggerVolume2D" ||
+    typePath === "engine_physics::TriggerVolume3D"
+  ) {
+    return (
+      <div className="marker-component-note">
+        Trigger sensor — detects overlaps without solid collision.
+      </div>
+    );
+  }
+  if (typePath === "engine_physics::OneWayPlatform2D") {
+    return (
+      <div className="marker-component-note">
+        One-way platform — blocks 2D platformer character only from above (+Y).
+      </div>
+    );
+  }
+
+  // Dedicated CollisionLayers bitmask editor
+  if (typePath === "engine_physics::CollisionLayers") {
+    return <CollisionLayersField value={value} onChange={onChange} />;
+  }
+
+  // Dedicated Collider2D / Collider3D editor
+  if (
+    typePath === "engine_physics::Collider3D" ||
+    typePath === "engine_physics::Collider2D"
+  ) {
+    return (
+      <ColliderField
+        is3d={typePath === "engine_physics::Collider3D"}
+        typePath={typePath}
+        value={value}
+        schema={schema}
+        assets={assets ?? []}
+        onChange={onChange}
+      />
+    );
+  }
 
   // 1. Name
   if (typePath === "bevy_ecs::name::Name") {
@@ -501,7 +1122,7 @@ export function SchemaField({
           ? (["X", "Y", "Z"] as const)
           : (["X", "Y", "Z", "W"] as const);
     return (
-      <div className="prop-row">
+      <div className={propRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <VectorRow
           axes={axes}
@@ -514,7 +1135,7 @@ export function SchemaField({
 
   if (typePath === "glam::Quat" || typePath === "bevy_math::quat::Quat") {
     return (
-      <div className="prop-row">
+      <div className={propRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <QuatEulerEditor value={value} onChange={(q) => onChange(q)} />
       </div>
@@ -527,7 +1148,7 @@ export function SchemaField({
     const hex = rgbaToHex(info.rgba, info.isLinear);
     return (
       <div className="color-editor-block">
-        <div className="prop-row">
+        <div className={propRowClass}>
           {label && <span className="prop-label">{label}</span>}
           <div className="color-swatch-row">
             <input
@@ -587,6 +1208,48 @@ export function SchemaField({
     );
   }
 
+  // 6b. EntityGuid / Option<EntityGuid> target selector
+  if (
+    typePath === "engine_core::guid::EntityGuid" ||
+    optionInner === "engine_core::guid::EntityGuid"
+  ) {
+    const isOptional = optionInner !== null;
+    const currentGuid = readAssetUuidValue(value);
+    const candidateEntities = (sceneEntities ?? []).filter(
+      (ent) => ent.guid !== currentEntityGuid,
+    );
+    const hasCurrentInList =
+      currentGuid !== "" &&
+      candidateEntities.some((ent) => ent.guid === currentGuid);
+    return (
+      <div className={propRowClass}>
+        {label && <span className="prop-label">{label}</span>}
+        <select
+          className="select-input prop-control"
+          value={currentGuid}
+          onChange={(e) => {
+            const next = e.target.value;
+            onChange(next ? next : isOptional ? null : currentGuid, true);
+          }}
+        >
+          {isOptional && <option value="">None (Disabled)</option>}
+          {currentGuid !== "" && !hasCurrentInList && (
+            <option value={currentGuid}>
+              {currentGuid === currentEntityGuid
+                ? "Self (Invalid target)"
+                : `Missing (${currentGuid.slice(0, 8)}…)`}
+            </option>
+          )}
+          {candidateEntities.map((ent) => (
+            <option key={ent.guid} value={ent.guid}>
+              {ent.name} ({ent.guid.slice(0, 8)})
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
   // 7. Generic Option<T>
   if (optionInner !== null) {
     const isSome = value !== null && value !== undefined;
@@ -617,6 +1280,8 @@ export function SchemaField({
               value={value}
               schema={schema}
               assets={assets}
+              sceneEntities={sceneEntities}
+              currentEntityGuid={currentEntityGuid}
               onChange={onChange}
             />
           </div>
@@ -628,7 +1293,7 @@ export function SchemaField({
   // 7. Booleans, Numbers, Strings
   if (typePath === "bool" || def?.type === "boolean") {
     return (
-      <div className="prop-row">
+      <div className={propRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <label className="option-toggle">
           <input
@@ -660,34 +1325,53 @@ export function SchemaField({
   ) {
     const numVal = typeof value === "number" ? value : 0;
     const isUnitSlider =
-      label === "metallic" || label === "perceptual_roughness";
+      label === "metallic" ||
+      label === "perceptual_roughness" ||
+      label === "restitution" ||
+      (parentTypePath === "engine_audio::AudioEmitter" &&
+        (label === "gain" || label === "gain_variation"));
+    const isPitchSlider =
+      parentTypePath === "engine_audio::AudioEmitter" && label === "pitch";
+    const isNonNegative =
+      label === "min_distance" ||
+      label === "max_distance" ||
+      label === "friction" ||
+      label === "density" ||
+      label === "pitch_variation" ||
+      label === "slope_degrees" ||
+      label === "step_height" ||
+      label === "ground_snap";
+    const sliderMin = isPitchSlider ? 0.125 : 0;
+    const sliderMax = isPitchSlider ? 4.0 : 1;
+    const sliderStep = isPitchSlider ? 0.05 : 0.01;
+    const hasSlider = isUnitSlider || isPitchSlider;
     const step =
       def?.type === "integer" || typePath.startsWith("u") || typePath.startsWith("i")
         ? 1
-        : isUnitSlider
-          ? 0.01
+        : hasSlider
+          ? sliderStep
           : 0.1;
 
     return (
-      <div className="prop-row">
+      <div className={propRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <div className="scalar-control">
-          {isUnitSlider && (
+          {hasSlider && (
             <input
               type="range"
               className="unit-slider"
-              min={0}
-              max={1}
-              step={0.01}
-              value={Math.max(0, Math.min(1, numVal))}
+              min={sliderMin}
+              max={sliderMax}
+              step={sliderStep}
+              value={Math.max(sliderMin, Math.min(sliderMax, numVal))}
               onChange={(e) => onChange(Number(e.target.value))}
             />
           )}
           <NumericInput
             value={numVal}
             step={step}
-            min={isUnitSlider ? 0 : undefined}
-            max={isUnitSlider ? 1 : undefined}
+            min={hasSlider ? sliderMin : isNonNegative ? 0 : undefined}
+            max={hasSlider ? sliderMax : undefined}
             onChange={(nextNum) => onChange(nextNum)}
           />
         </div>
@@ -702,7 +1386,7 @@ export function SchemaField({
     def?.type === "string" && !def.oneOf
   ) {
     return (
-      <div className="prop-row">
+      <div className={propRowClass}>
         {label && <span className="prop-label">{label}</span>}
         <input
           type="text"
@@ -721,7 +1405,7 @@ export function SchemaField({
       const variants = def.oneOf.filter((v): v is string => typeof v === "string");
       const current = typeof value === "string" ? value : variants[0] ?? "";
       return (
-        <div className="prop-row">
+        <div className={propRowClass}>
           {label && <span className="prop-label">{label}</span>}
           <select
             className="select-input prop-control"
@@ -773,7 +1457,10 @@ export function SchemaField({
                 (v) => v.shortPath === e.target.value,
               );
               if (chosen) {
-                onChange(buildDefaultValueForVariant(chosen, schema), true);
+                onChange(
+                  buildDefaultValueForVariant(chosen, schema, 0, typePath),
+                  true,
+                );
               }
             }}
           >
@@ -807,6 +1494,8 @@ export function SchemaField({
                       value={fieldsObj[fieldName]}
                       schema={schema}
                       assets={assets}
+                      sceneEntities={sceneEntities}
+                      currentEntityGuid={currentEntityGuid}
                       onChange={(nextFieldVal, immediate) =>
                         onChange(
                           {
@@ -840,6 +1529,8 @@ export function SchemaField({
                   value={variantPayload}
                   schema={schema}
                   assets={assets}
+                  sceneEntities={sceneEntities}
+                  currentEntityGuid={currentEntityGuid}
                   onChange={(nextInner, immediate) =>
                     onChange({ [activeVariantName]: nextInner }, immediate)
                   }
@@ -859,6 +1550,8 @@ export function SchemaField({
                       value={arr[idx]}
                       schema={schema}
                       assets={assets}
+                      sceneEntities={sceneEntities}
+                      currentEntityGuid={currentEntityGuid}
                       onChange={(nextItem, immediate) => {
                         const copy = [...arr];
                         copy[idx] = nextItem;
@@ -875,15 +1568,15 @@ export function SchemaField({
   }
 
   // 9. Generic Structs
-  if (def?.kind === "Struct" && def.properties) {
+  if (def?.kind === "Struct") {
     const obj =
       value && typeof value === "object"
         ? (value as Record<string, unknown>)
         : {};
-    const entries = Object.entries(def.properties);
+    const entries = Object.entries(def.properties ?? {});
     if (entries.length === 0) {
       return (
-        <div className="muted" style={{ fontSize: 11 }}>
+        <div className="marker-component-note">
           Marker component (no editable fields)
         </div>
       );
@@ -902,6 +1595,8 @@ export function SchemaField({
               value={obj[fieldName]}
               schema={schema}
               assets={assets}
+              sceneEntities={sceneEntities}
+              currentEntityGuid={currentEntityGuid}
               onChange={(nextFieldVal, immediate) =>
                 onChange({ ...obj, [fieldName]: nextFieldVal }, immediate)
               }
@@ -923,14 +1618,19 @@ export function SchemaField({
   }
 
   // 10. Tuple / TupleStruct
-  if (
-    (def?.kind === "Tuple" || def?.kind === "TupleStruct") &&
-    Array.isArray(def.prefixItems)
-  ) {
+  if (def?.kind === "Tuple" || def?.kind === "TupleStruct") {
+    const prefixItems = def.prefixItems ?? [];
+    if (prefixItems.length === 0) {
+      return (
+        <div className="marker-component-note">
+          Marker component (no editable fields)
+        </div>
+      );
+    }
     const arr = Array.isArray(value) ? value : [value];
     return (
       <div className="struct-fields">
-        {def.prefixItems.map((itemRef, idx) => {
+        {prefixItems.map((itemRef, idx) => {
           const child = resolveSchemaRef(itemRef, schema);
           return (
             <SchemaField
@@ -941,6 +1641,8 @@ export function SchemaField({
               value={arr[idx]}
               schema={schema}
               assets={assets}
+              sceneEntities={sceneEntities}
+              currentEntityGuid={currentEntityGuid}
               onChange={(nextItem, immediate) => {
                 const copy = [...arr];
                 copy[idx] = nextItem;

@@ -18,9 +18,11 @@ import {
   List,
   Music2,
   Package,
+  Play,
   RefreshCw,
   Search,
   Sparkles,
+  Square,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -93,7 +95,7 @@ function renderKindIcon(kind: AssetKind, size = 18) {
     case "material":
       return <Sparkles size={size} className="cb-kind-icon kind-material" />;
     case "audio":
-      return <Music2 size={size} className="cb-kind-icon" />;
+      return <Music2 size={size} className="cb-kind-icon kind-audio" />;
     case "unknown":
       return <Box size={size} className="cb-kind-icon" />;
   }
@@ -608,6 +610,8 @@ export function ContentBrowserPanel({
                     onDoubleClick={() => {
                       if (asset.kind === "scene" && onOpenScenePath) {
                         onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
+                      } else if (asset.kind === "audio") {
+                        void previewAudio(asset.uuid);
                       } else if (onSpawnAssetAtCenter) {
                         onSpawnAssetAtCenter(asset);
                       }
@@ -656,7 +660,15 @@ export function ContentBrowserPanel({
                   onDragStart={(e) => handleAssetDragStart(e, asset)}
                   onDragEnd={() => clearDraggedAsset()}
                   onClick={() => setSelectedUuid(asset.uuid)}
-                  onDoubleClick={() => onSpawnAssetAtCenter?.(asset)}
+                  onDoubleClick={() => {
+                    if (asset.kind === "scene" && onOpenScenePath) {
+                      onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
+                    } else if (asset.kind === "audio") {
+                      void previewAudio(asset.uuid);
+                    } else {
+                      onSpawnAssetAtCenter?.(asset);
+                    }
+                  }}
                 >
                   {renderKindIcon(asset.kind, 14)}
                   <span className="cb-list-name truncate">{asset.relative_path}</span>
@@ -689,9 +701,22 @@ export function ContentBrowserPanel({
             </div>
 
             {selectedAsset.kind === "audio" && (
-              <div className="cb-inline-bar compact">
-                <button type="button" disabled={busyAction} onClick={() => void previewAudio(selectedAsset.uuid)}>Play preview</button>
-                <button type="button" disabled={busyAction} onClick={() => void previewAudio(null)}>Stop</button>
+              <div className="audio-preview-bar">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busyAction}
+                  onClick={() => void previewAudio(selectedAsset.uuid)}
+                >
+                  <Play size={12} /> Play preview
+                </button>
+                <button
+                  type="button"
+                  disabled={busyAction}
+                  onClick={() => void previewAudio(null)}
+                >
+                  <Square size={11} /> Stop
+                </button>
               </div>
             )}
 

@@ -104,7 +104,7 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     asset: null,
     tile_scale: 1.0,
   },
-  "engine_core::asset_id::AssetUuid": null,
+  "engine_core::asset_id::AssetUuid": "00000000-0000-0000-0000-000000000000",
   "engine_scene::components::SceneCamera3d": {
     fov_degrees: 45.0,
     active: true,
@@ -215,6 +215,86 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
   "glam::Vec4": [0, 0, 0, 0],
   "glam::Quat": [0, 0, 0, 1],
 };
+
+const CURATED_VARIANT_DEFAULTS: Record<string, Record<string, unknown>> = {
+  "engine_physics::Collider3D": {
+    Cuboid: { Cuboid: [0.5, 0.5, 0.5] },
+    Ball: { Ball: 0.5 },
+    Capsule: { Capsule: [0.5, 0.35] },
+    Cylinder: { Cylinder: [0.5, 0.5] },
+    ConvexHull: {
+      ConvexHull: [
+        [-0.5, -0.5, -0.5],
+        [0.5, -0.5, -0.5],
+        [0.0, -0.5, 0.5],
+        [0.0, 0.5, 0.0],
+      ],
+    },
+    TriMesh: {
+      TriMesh: {
+        vertices: [
+          [-0.5, 0.0, -0.5],
+          [0.5, 0.0, -0.5],
+          [0.5, 0.0, 0.5],
+          [-0.5, 0.0, 0.5],
+        ],
+        indices: [
+          [0, 1, 2],
+          [0, 2, 3],
+        ],
+      },
+    },
+    Heightfield: {
+      Heightfield: {
+        rows: 2,
+        columns: 2,
+        heights: [0.0, 0.0, 0.0, 0.0],
+        scale: [2.0, 1.0, 2.0],
+      },
+    },
+  },
+  "engine_physics::Collider2D": {
+    Cuboid: { Cuboid: [32.0, 32.0] },
+    Ball: { Ball: 32.0 },
+    Capsule: { Capsule: [24.0, 16.0] },
+    Segment: { Segment: [[-32.0, 0.0], [32.0, 0.0]] },
+    ConvexPolygon: {
+      ConvexPolygon: [
+        [-32.0, -32.0],
+        [32.0, -32.0],
+        [0.0, 32.0],
+      ],
+    },
+    Polyline: {
+      Polyline: [
+        [-48.0, 0.0],
+        [0.0, 16.0],
+        [48.0, 0.0],
+      ],
+    },
+    TilemapCollider: {
+      TilemapCollider: {
+        asset: "00000000-0000-0000-0000-000000000000",
+        tile_scale: 1.0,
+      },
+    },
+  },
+};
+
+export function getComponentBadgeCategory(
+  typePath: string,
+): "Physics" | "Audio" | "Scene" | null {
+  if (typePath.startsWith("engine_physics::")) {
+    return "Physics";
+  }
+  if (typePath.startsWith("engine_audio::")) {
+    return "Audio";
+  }
+  if (typePath.startsWith("engine_scene::components::")) {
+    return "Scene";
+  }
+  return null;
+}
 
 export function extractRefTypePath(refObj: BrpSchemaRef | undefined): string | null {
   if (!refObj) {
@@ -382,8 +462,12 @@ export function buildDefaultValueForVariant(
   variant: BrpSchemaType,
   schema: BrpRegistrySchema | null,
   depth = 0,
+  parentTypePath?: string,
 ): unknown {
   const variantName = variant.shortPath ?? "Variant";
+  if (parentTypePath && CURATED_VARIANT_DEFAULTS[parentTypePath]?.[variantName]) {
+    return structuredClone(CURATED_VARIANT_DEFAULTS[parentTypePath][variantName]);
+  }
   if (!variant.kind) {
     return variantName;
   }

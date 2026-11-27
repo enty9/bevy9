@@ -1,9 +1,10 @@
 //! Rapier's 2D and 3D APIs are isomorphic. Instantiate the same ECS lifecycle for both.
 
 macro_rules! backend {
-    ($world:ident, $body:ident, $collider:ident, $trigger:ident, $joint:ident, $controller:ident, $motion:ident, $dim:ident, $vec:ty, $length:expr) => {
+    ($world:ident, $body:ident, $collider:ident, $trigger:ident, $joint:ident, $controller:ident, $motion:ident, $dim:ident, $vec:ty, $length:expr, $camera_marker:ty) => {
         use std::collections::{BTreeMap, BTreeSet};
 
+        use bevy_camera::Camera;
         use bevy_color::Color;
         use bevy_gizmos::prelude::Gizmos;
         use bevy_transform::{
@@ -246,21 +247,7 @@ macro_rules! backend {
             extras: Extras<'w, 's>,
         }
 
-        pub(crate) fn step(
-            world: ResMut<$world>,
-            mut scene: SceneBodies,
-            gravity: Res<Gravity>,
-            options: Res<PhysicsOptions>,
-            time: Res<Time<Fixed>>,
-            mut commands: Commands,
-        ) {
-            let world = world.into_inner();
-            if !options.simulate && !options.debug {
-                if !world.entries.is_empty() {
-                    *world = $world::default();
-                }
-                return;
-            }
+        fn sync_descriptors(world: &mut $world, scene: &mut SceneBodies, simulate: bool) {
             scene.extras.prepare();
 
             let mut seen = BTreeSet::new();
@@ -323,7 +310,7 @@ macro_rules! backend {
 
                 let local_changed = local != entry.last_local;
                 let target_changed = entry.last_target != transform_pose;
-                if !options.simulate
+                if !simulate
                     || (body.kind == BodyKind::Static && target_changed)
                     || (body.kind == BodyKind::Dynamic && local_changed)
                     || (body.kind == BodyKind::Kinematic
@@ -455,11 +442,41 @@ macro_rules! backend {
             world
                 .bodies
                 .propagate_modified_body_positions_to_colliders(&mut world.colliders);
-            if !options.simulate {
-                world.contacts.clear();
-                world.overlaps.clear();
+        }
+
+        pub(crate) fn sync_debug(
+            world: ResMut<$world>,
+            mut scene: SceneBodies,
+            options: Res<PhysicsOptions>,
+        ) {
+            if options.simulate {
                 return;
             }
+            let world = world.into_inner();
+            if !options.debug {
+                if !world.entries.is_empty() {
+                    *world = $world::default();
+                }
+                return;
+            }
+            sync_descriptors(world, &mut scene, false);
+            world.contacts.clear();
+            world.overlaps.clear();
+        }
+
+        pub(crate) fn step(
+            world: ResMut<$world>,
+            mut scene: SceneBodies,
+            gravity: Res<Gravity>,
+            options: Res<PhysicsOptions>,
+            time: Res<Time<Fixed>>,
+            mut commands: Commands,
+        ) {
+            if !options.simulate {
+                return;
+            }
+            let world = world.into_inner();
+            sync_descriptors(world, &mut scene, true);
 
             let dt = time.timestep().as_secs_f32();
             let g = safe_vector(gravity_vector(&gravity));
@@ -623,21 +640,60 @@ macro_rules! backend {
             }
         }
 
-        struct Lines<'a, 'w, 's>(&'a mut Gizmos<'w, 's, PhysicsGizmos>);
+        struct Lines<'a, 'w, 's> {
+            gizmos: &'a mut Gizmos<'w, 's, PhysicsGizmos>,
+            bodies: &'a RigidBodySet,
+        }
 
         impl DebugRenderBackend for Lines<'_, '_, '_> {
             fn draw_line(
                 &mut self,
-                _: DebugRenderObject<'_>,
+                object: DebugRenderObject<'_>,
                 a: Point<f32>,
                 b: Point<f32>,
                 color: DebugColor,
             ) {
-                self.0.line(
-                    debug_point(a),
-                    debug_point(b),
-                    Color::hsla(color[0], color[1], color[2], color[3]),
-                );
+                let resolved = match object {
+                    DebugRenderObject::Collider(_, collider) => {
+                        let sleeping = collider
+                            .parent()
+                            .and_then(|p| self.bodies.get(p))
+                            .is_some_and(RigidBody::is_sleeping);
+                        if collider.is_sensor() {
+                            Color::srgba(1.0, 0.78, 0.18, if sleeping { 0.55 } else { 0.95 })
+                        } else {
+                            match collider
+                                .parent()
+                                .and_then(|p| self.bodies.get(p))
+                                .map(RigidBody::body_type)
+                            {
+                                Some(RigidBodyType::Dynamic) => Color::srgba(
+                                    0.24,
+                                    0.92,
+                                    0.48,
+                                    if sleeping { 0.55 } else { 0.95 },
+                                ),
+                                Some(
+                                    RigidBodyType::KinematicPositionBased
+                                    | RigidBodyType::KinematicVelocityBased,
+                                ) => Color::srgba(
+                                    0.22,
+                                    0.85,
+                                    1.0,
+                                    if sleeping { 0.55 } else { 0.95 },
+                                ),
+                                Some(RigidBodyType::Fixed) | None => {
+                                    Color::srgba(0.38, 0.74, 1.0, 0.9)
+                                }
+                            }
+                        }
+                    }
+                    DebugRenderObject::ImpulseJoint(..) | DebugRenderObject::MultibodyJoint(..) => {
+                        Color::srgba(0.95, 0.45, 0.95, 0.95)
+                    }
+                    _ => Color::hsla(color[0], color[1], color[2], color[3]),
+                };
+                self.gizmos.line(debug_point(a), debug_point(b), resolved);
             }
         }
 
@@ -645,19 +701,31 @@ macro_rules! backend {
             world: ResMut<$world>,
             options: Res<PhysicsOptions>,
             mut gizmos: Gizmos<PhysicsGizmos>,
+            cameras: Query<&Camera, With<$camera_marker>>,
         ) {
-            if !options.debug {
+            if !options.debug || !cameras.iter().any(|cam| cam.is_active) {
                 return;
             }
-            let world = world.into_inner();
-            world.debug.mode = DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::JOINTS;
-            world.debug.render(
-                &mut Lines(&mut gizmos),
-                &world.bodies,
-                &world.colliders,
-                &world.joints,
-                &world.multibody,
-                &world.narrow,
+            let $world {
+                debug,
+                bodies,
+                colliders,
+                joints,
+                multibody,
+                narrow,
+                ..
+            } = world.into_inner();
+            debug.mode = DebugRenderMode::COLLIDER_SHAPES | DebugRenderMode::JOINTS;
+            debug.render(
+                &mut Lines {
+                    gizmos: &mut gizmos,
+                    bodies,
+                },
+                bodies,
+                colliders,
+                joints,
+                multibody,
+                narrow,
             );
         }
     };

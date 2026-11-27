@@ -4,13 +4,16 @@ import {
   ChevronRight,
   Package,
   PackagePlus,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
+  Square,
   Trash2,
 } from "lucide-react";
 import {
   buildDefaultValueForType,
+  getComponentBadgeCategory,
   isComputedRuntimeComponent,
   isProtectedComponent,
   shortComponentName,
@@ -24,7 +27,7 @@ import type {
   PrefabMemberData,
   SceneTreeNode,
 } from "../protocol/types";
-import { SchemaField } from "./SchemaField";
+import { SchemaField, type SceneEntityOption } from "./SchemaField";
 
 interface InspectorPanelProps {
   selectedNode: SceneTreeNode | null;
@@ -33,6 +36,7 @@ interface InspectorPanelProps {
   brpClient: BrpClient | null;
   registrySchema: BrpRegistrySchema | null;
   assets?: AssetRecord[];
+  sceneEntities?: SceneEntityOption[];
   inspectorRevision?: number;
   onComponentChanged: (refreshTree: boolean) => void;
   onDeleteEntity: (node: SceneTreeNode) => void;
@@ -53,6 +57,7 @@ export function InspectorPanel({
   brpClient,
   registrySchema,
   assets,
+  sceneEntities,
   inspectorRevision = 0,
   onComponentChanged,
   onDeleteEntity,
@@ -96,25 +101,31 @@ export function InspectorPanel({
     >
   >(new Map());
 
-  const flushPendingWrites = useCallback(() => {
+  const flushPendingWrites = useCallback(async () => {
+    const writes: Array<Promise<unknown>> = [];
     for (const [key, entry] of pendingTimersRef.current.entries()) {
       window.clearTimeout(entry.timerId);
       pendingTimersRef.current.delete(key);
       if (brpClient) {
-        void brpClient.setComponent(
-          entry.guid,
-          entry.typePath,
-          entry.value,
-          `${entry.guid}:${entry.typePath}`,
-          entry.label,
+        writes.push(
+          brpClient.setComponent(
+            entry.guid,
+            entry.typePath,
+            entry.value,
+            `${entry.guid}:${entry.typePath}`,
+            entry.label,
+          ),
         );
       }
+    }
+    if (writes.length > 0) {
+      await Promise.allSettled(writes);
     }
   }, [brpClient]);
 
   useEffect(() => {
     return () => {
-      flushPendingWrites();
+      void flushPendingWrites();
     };
   }, [flushPendingWrites, selectedNode?.guid]);
 
@@ -276,12 +287,15 @@ export function InspectorPanel({
           typePath.toLowerCase().includes(needle)
         );
       })
-      .map(([typePath, def]) => ({
-        typePath,
-        shortPath: def.shortPath ?? shortComponentName(typePath, registrySchema),
-        isEngineScene: typePath.startsWith("engine_scene::components::") ||
-          typePath.startsWith("engine_physics::") || typePath.startsWith("engine_audio::"),
-      }));
+      .map(([typePath, def]) => {
+        const badgeCategory = getComponentBadgeCategory(typePath);
+        return {
+          typePath,
+          shortPath: def.shortPath ?? shortComponentName(typePath, registrySchema),
+          badgeCategory,
+          isEngineScene: badgeCategory !== null,
+        };
+      });
 
     items.sort((a, b) => {
       if (a.isEngineScene !== b.isEngineScene) {
@@ -296,6 +310,7 @@ export function InspectorPanel({
     if (!brpClient) return;
     setErrorBanner(null);
     try {
+      await flushPendingWrites();
       if (guid) await brpClient.call("engine.audio.preview_emitter", { guid });
       else await brpClient.call("engine.audio.preview", { uuid: null });
     } catch (error) {
@@ -569,8 +584,12 @@ export function InspectorPanel({
                           onClick={() => void handleAddComponent(item.typePath)}
                         >
                           <span>{item.shortPath}</span>
-                          {item.isEngineScene && (
-                            <span className="badge">Scene</span>
+                          {item.badgeCategory && (
+                            <span
+                              className={`badge badge-${item.badgeCategory.toLowerCase()}`}
+                            >
+                              {item.badgeCategory}
+                            </span>
                           )}
                         </button>
                       ))
@@ -667,9 +686,20 @@ export function InspectorPanel({
                 {!collapsed && (
                   <div className="component-card-body">
                     {typePath === "engine_audio::AudioEmitter" && brpClient && (
-                      <div className="panel-actions">
-                        <button type="button" onClick={() => void previewEmitter(selectedNode.guid)}>Preview emitter</button>
-                        <button type="button" onClick={() => void previewEmitter(null)}>Stop</button>
+                      <div className="audio-preview-bar">
+                        <button
+                          type="button"
+                          className="primary"
+                          onClick={() => void previewEmitter(selectedNode.guid)}
+                        >
+                          <Play size={12} /> Preview emitter
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void previewEmitter(null)}
+                        >
+                          <Square size={11} /> Stop
+                        </button>
                       </div>
                     )}
                     {compErr ? (
@@ -686,6 +716,8 @@ export function InspectorPanel({
                         value={componentValues[typePath]}
                         schema={registrySchema}
                         assets={assets}
+                        sceneEntities={sceneEntities}
+                        currentEntityGuid={selectedNode.guid}
                         onChange={(nextVal, immediate) =>
                           handleFieldMutate(typePath, nextVal, immediate)
                         }

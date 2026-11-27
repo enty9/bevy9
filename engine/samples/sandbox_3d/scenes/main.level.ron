@@ -173,15 +173,15 @@
                     "bevy_camera::visibility::Visibility": Inherited,
                     "bevy_ecs::name::Name": "Floor",
                     "bevy_transform::components::transform::Transform": (
-                        translation: (0.0, 0.0, 0.0),
+                        translation: (0.0, -0.1, 0.0),
                         rotation: (0.0, 0.0, 0.0, 1.0),
                         scale: (1.0, 1.0, 1.0),
                     ),
                     "engine_core::guid::EntityGuid": ("10000000-0000-4000-8000-000000000001"),
-                    "engine_scene::components::MeshPrimitive3d": Plane(
-                        size: (12.0, 12.0),
+                    "engine_scene::components::MeshPrimitive3d": Cube(
+                        size: (12.0, 0.2, 12.0),
                     ),
-                    "engine_physics::Collider3D": Cuboid((6.0, 0.03, 6.0)),
+                    "engine_physics::Collider3D": Cuboid((6.0, 0.1, 6.0)),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::StandardMaterialDesc": (
                         base_color: Srgba((

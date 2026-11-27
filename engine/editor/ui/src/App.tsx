@@ -161,6 +161,7 @@ export function App() {
   const [sceneDirty, setSceneDirty] = useState(false);
 
   const [logs, setLogs] = useState<EngineLogMessage[]>([]);
+  const [physicsDebug, setPhysicsDebug] = useState(false);
   const [busy, setBusy] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
 
@@ -376,12 +377,16 @@ export function App() {
         return;
       }
       try {
-        const [schema, tree, prefabList, assetsSnap] = await Promise.all([
-          brpClient.getRegistrySchema(),
-          brpClient.getWorldTree(),
-          brpClient.listPrefabs(),
-          brpClient.listAssets(),
-        ]);
+        const [schema, tree, prefabList, assetsSnap, debugState] =
+          await Promise.all([
+            brpClient.getRegistrySchema(),
+            brpClient.getWorldTree(),
+            brpClient.listPrefabs(),
+            brpClient.listAssets(),
+            brpClient
+              .call<{ enabled: boolean }>("engine.physics.debug")
+              .catch(() => ({ enabled: false })),
+          ]);
         if (cancelled) {
           return;
         }
@@ -389,6 +394,7 @@ export function App() {
         setHierarchy(tree.roots);
         setPrefabs(prefabList.prefabs);
         setAssetSnapshot(assetsSnap);
+        setPhysicsDebug(debugState.enabled);
         setSceneName(tree.scene_name);
         setScenePath(tree.scene_path);
       } catch (err) {
@@ -510,6 +516,7 @@ export function App() {
     setAssetSnapshot(null);
     setActiveAssetFolder("");
     setRegistrySchema(null);
+    setPhysicsDebug(false);
     try {
       const loaded = await loadProjectMetadata(projectDir);
       setActiveProject(loaded);
@@ -1052,6 +1059,34 @@ export function App() {
     [hierarchy, selectedNode],
   );
 
+  const sceneEntities = useMemo(() => {
+    const out: Array<{ guid: string; name: string }> = [];
+    const visit = (nodes: SceneTreeNode[]) => {
+      for (const n of nodes) {
+        out.push({ guid: n.guid, name: n.name });
+        if (n.children.length > 0) {
+          visit(n.children);
+        }
+      }
+    };
+    visit(hierarchy);
+    return out;
+  }, [hierarchy]);
+
+  const handleTogglePhysicsDebug = useCallback(
+    async (enabled: boolean) => {
+      if (!brpClient) {
+        return;
+      }
+      const next = await brpClient.call<{ enabled: boolean }>(
+        "engine.physics.debug",
+        { enabled },
+      );
+      setPhysicsDebug(next.enabled);
+    },
+    [brpClient],
+  );
+
   const handleComponentChanged = useCallback(
     async (refreshTree: boolean) => {
       setSceneDirty(true);
@@ -1072,6 +1107,7 @@ export function App() {
       <Toolbar
         brpClient={brpClient}
         projectKey={`${hostStatus.project_dir ?? ""}:${hostStatus.pid ?? ""}`}
+        physicsDebug={physicsDebug}
         samples={samples}
         activeProject={activeProject}
         hostStatus={hostStatus}
@@ -1091,6 +1127,7 @@ export function App() {
         onUndo={() => void handleUndo()}
         onRedo={() => void handleRedo()}
         onSetCameraMode={handleSetCameraMode}
+        onTogglePhysicsDebug={handleTogglePhysicsDebug}
         onStartHost={() =>
           activeProject && void handleStartForProject(activeProject.root_dir)
         }
@@ -1148,10 +1185,16 @@ export function App() {
             height={viewportState.height}
             ipcState={ipcState}
             gizmoState={gizmoState}
+            physicsDebug={physicsDebug}
             assets={assetSnapshot?.assets ?? []}
             subscribeFrames={subscribeFrames}
             onViewportInput={handleViewportInput}
             onToggleViewportMode={handleToggleViewportMode}
+            onTogglePhysicsDebug={(enabled) =>
+              void handleTogglePhysicsDebug(enabled).catch((err) =>
+                setBannerError(err instanceof Error ? err.message : String(err)),
+              )
+            }
             onChangeGizmoState={handleChangeGizmoState}
             onDropAsset={(asset, vx, vy) =>
               void handleSpawnAssetInViewport(asset, vx, vy)
@@ -1193,6 +1236,7 @@ export function App() {
             brpClient={brpClient}
             registrySchema={registrySchema}
             assets={assetSnapshot?.assets ?? []}
+            sceneEntities={sceneEntities}
             inspectorRevision={inspectorRevision}
             onComponentChanged={(refreshTree) =>
               void handleComponentChanged(refreshTree)
