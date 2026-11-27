@@ -60,6 +60,41 @@ export function isRunningInTauri(): boolean {
   return isTauri();
 }
 
+let openNativeDialogs = 0;
+const nativeDialogListeners = new Set<(open: boolean) => void>();
+
+function notifyNativeDialogListeners(): void {
+  const isOpen = openNativeDialogs > 0;
+  for (const listener of nativeDialogListeners) {
+    listener(isOpen);
+  }
+}
+
+export function subscribeNativeDialogOpen(
+  listener: (open: boolean) => void,
+): () => void {
+  nativeDialogListeners.add(listener);
+  listener(openNativeDialogs > 0);
+  return () => {
+    nativeDialogListeners.delete(listener);
+  };
+}
+
+async function withNativeDialog<T>(task: () => Promise<T>): Promise<T> {
+  openNativeDialogs += 1;
+  if (openNativeDialogs === 1) {
+    notifyNativeDialogListeners();
+  }
+  try {
+    return await task();
+  } finally {
+    openNativeDialogs = Math.max(0, openNativeDialogs - 1);
+    if (openNativeDialogs === 0) {
+      notifyNativeDialogListeners();
+    }
+  }
+}
+
 export async function listSampleProjects(): Promise<ProjectSummary[]> {
   if (!isTauri()) {
     return [];
@@ -147,11 +182,13 @@ export async function pickProjectFolder(): Promise<string | null> {
   if (!isTauri()) {
     return null;
   }
-  const selected = await open({
-    directory: true,
-    multiple: false,
-    title: "Select Bevy9 Project Directory",
-  });
+  const selected = await withNativeDialog(() =>
+    open({
+      directory: true,
+      multiple: false,
+      title: "Select Bevy9 Project Directory",
+    }),
+  );
   return typeof selected === "string" ? selected : null;
 }
 
@@ -159,12 +196,14 @@ export async function pickOpenSceneFile(defaultPath?: string): Promise<string | 
   if (!isTauri()) {
     return null;
   }
-  const selected = await open({
-    multiple: false,
-    defaultPath,
-    title: "Open Scene (.level.ron)",
-    filters: [{ name: "Bevy9 Scene", extensions: ["ron"] }],
-  });
+  const selected = await withNativeDialog(() =>
+    open({
+      multiple: false,
+      defaultPath,
+      title: "Open Scene (.level.ron)",
+      filters: [{ name: "Bevy9 Scene", extensions: ["ron"] }],
+    }),
+  );
   return typeof selected === "string" ? selected : null;
 }
 
@@ -172,11 +211,13 @@ export async function pickSaveSceneFile(defaultPath?: string): Promise<string | 
   if (!isTauri()) {
     return null;
   }
-  const selected = await save({
-    defaultPath,
-    title: "Save Scene (.level.ron)",
-    filters: [{ name: "Bevy9 Scene", extensions: ["ron"] }],
-  });
+  const selected = await withNativeDialog(() =>
+    save({
+      defaultPath,
+      title: "Save Scene (.level.ron)",
+      filters: [{ name: "Bevy9 Scene", extensions: ["ron"] }],
+    }),
+  );
   return typeof selected === "string" ? selected : null;
 }
 
@@ -184,11 +225,13 @@ export async function pickSavePrefabFile(defaultPath?: string): Promise<string |
   if (!isTauri()) {
     return null;
   }
-  const selected = await save({
-    defaultPath,
-    title: "Save Prefab (.prefab.ron)",
-    filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
-  });
+  const selected = await withNativeDialog(() =>
+    save({
+      defaultPath,
+      title: "Save Prefab (.prefab.ron)",
+      filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
+    }),
+  );
   return typeof selected === "string" ? selected : null;
 }
 
@@ -196,12 +239,14 @@ export async function pickOpenPrefabFile(defaultPath?: string): Promise<string |
   if (!isTauri()) {
     return null;
   }
-  const selected = await open({
-    multiple: false,
-    defaultPath,
-    title: "Instantiate Prefab (.prefab.ron)",
-    filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
-  });
+  const selected = await withNativeDialog(() =>
+    open({
+      multiple: false,
+      defaultPath,
+      title: "Instantiate Prefab (.prefab.ron)",
+      filters: [{ name: "Bevy9 Prefab", extensions: ["ron"] }],
+    }),
+  );
   return typeof selected === "string" ? selected : null;
 }
 
@@ -209,16 +254,18 @@ export async function pickImportAssetFiles(): Promise<string[]> {
   if (!isTauri()) {
     return [];
   }
-  const selected = await open({
-    multiple: true,
-    title: "Import Assets",
-    filters: [
-      {
-        name: "Supported Assets",
-        extensions: ["png", "bmp", "tga", "glb", "gltf", "ron", "rhai", "wav", "ogg", "mp3", "flac"],
-      },
-    ],
-  });
+  const selected = await withNativeDialog(() =>
+    open({
+      multiple: true,
+      title: "Import Assets",
+      filters: [
+        {
+          name: "Supported Assets",
+          extensions: ["png", "bmp", "tga", "glb", "gltf", "ron", "rhai", "wav", "ogg", "mp3", "flac"],
+        },
+      ],
+    }),
+  );
   if (Array.isArray(selected)) {
     return selected.filter((p): p is string => typeof p === "string");
   }

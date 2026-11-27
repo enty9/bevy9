@@ -39,7 +39,7 @@ def main():
     env = dict(os.environ, XDG_SESSION_TYPE='x11')
     env.pop('WAYLAND_DISPLAY', None)
     env.pop('WAYLAND_SOCKET', None)
-    blender = [env.get('BEVY9_BLENDER', 'blender'), '--factory-startup', '--disable-autoexec',
+    blender = [env.get('BEVY9_BLENDER') or 'blender', '--factory-startup', '--disable-autoexec',
                '-noaudio', '--python-exit-code', '1']
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -59,6 +59,8 @@ def main():
             '-P', driver, '--python-expr',
             "import bpy; bpy.context.active_object.modifiers.new('Smoke bevel', 'BEVEL')",
             '--', 'edit', root], env=env)
+        display = None
+        x11 = None
         try:
             status = root / 'status.json'
             wait(lambda: status.exists() and json.loads(status.read_text())['ready'], child)
@@ -70,7 +72,9 @@ def main():
             from ctypes import CDLL, byref, c_uint, c_ulong, c_void_p
             x11 = CDLL('libX11.so.6')
             x11.XOpenDisplay.restype = c_void_p
+            x11.XCloseDisplay.argtypes = [c_void_p]
             display = c_void_p(x11.XOpenDisplay(None))
+            assert display.value, 'Could not open X11 display'
             def parented():
                 parent, screen, children, count = c_ulong(), c_ulong(), c_void_p(), c_uint()
                 x11.XQueryTree(display, c_ulong(int(win)), byref(screen), byref(parent), byref(children), byref(count))
@@ -83,13 +87,17 @@ def main():
             wait(visible, child)
             (root / 'save').write_text('smoke')
             wait(lambda: json.loads(status.read_text()).get('reply') == 'smoke', child)
-            assert not json.loads(status.read_text())['error'], status.read_text()
+            saved_state = json.loads(status.read_text())
+            assert not saved_state['error'], saved_state
+            assert saved_state['saved'] >= 1 and not saved_state['dirty'], saved_state
             assert source.is_file() and marker.read_text() == f'(uuid: ("{uid}"))'
             data = asset.read_bytes()
             assert data[:4] == b'glTF' and data != original
             gltf = json.loads(data[20:20 + struct.unpack_from('<I', data, 12)[0]])
             assert gltf['meshes'] and gltf['scenes']
         finally:
+            if x11 and display and display.value:
+                x11.XCloseDisplay(display)
             child.kill()
             child.wait()
         subprocess.run([*blender, '-b', source, '--python-expr',

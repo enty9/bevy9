@@ -5,29 +5,47 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 
 import bpy
 
 
 def export_glb(path):
-    result = bpy.ops.export_scene.gltf(filepath=str(path), export_format='GLB', export_apply=True,
-                                       export_cameras=False, export_lights=False)
+    result = bpy.ops.export_scene.gltf(
+        filepath=str(path),
+        export_format='GLB',
+        export_apply=True,
+        export_cameras=False,
+        export_lights=False,
+    )
     if 'FINISHED' not in result:
         raise RuntimeError('Model export was cancelled')
+
+
+def replace_with_retry(src, dst):
+    for attempt in range(5):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.05)
 
 
 def write_json(path, data):
     tmp = path.with_suffix('.tmp')
     tmp.write_text(json.dumps(data), encoding='utf-8')
-    os.replace(tmp, path)
+    replace_with_retry(tmp, path)
 
 
 def start(work):
     config = json.loads((work / 'session.json').read_text(encoding='utf-8'))
     asset, source = (Path(config[k]) for k in ('asset', 'source'))
     marker = Path(str(asset) + '.b9meta')
+    asset_resolved = asset.resolve(strict=True)
+    asset_root_resolved = Path(config['assets_root']).resolve(strict=True)
     source_root = source.parent.resolve(strict=True)
-    asset_root = Path(config['assets_root'])
     original = asset.stat()
     prefs = bpy.context.preferences
     prefs.view.show_splash = False
@@ -38,7 +56,7 @@ def start(work):
         if 'FINISHED' not in bpy.ops.import_scene.gltf(filepath=str(asset)):
             raise RuntimeError('Could not import model')
     # Ctrl+S writes to a session document, never to another project's file.
-    working = work / 'model.blend'
+    working = (work / 'model.blend').resolve()
     bpy.ops.wm.save_as_mainfile(filepath=str(working), relative_remap=True)
 
     state = {'ready': False, 'dirty': False, 'error': None, 'saved': 0, 'reply': None}
@@ -46,8 +64,10 @@ def start(work):
 
     def publish():
         nonlocal original
-        if (asset.resolve(strict=True) != asset or not asset.is_relative_to(asset_root)
+        if (asset.is_symlink() or asset.resolve(strict=True) != asset_resolved
+                or not asset_resolved.is_relative_to(asset_root_resolved)
                 or source.parent.resolve(strict=True) != source_root or source.is_symlink()
+                or not marker.is_file()
                 or config['uuid'] not in marker.read_text(encoding='utf-8')):
             raise RuntimeError('Asset was moved or replaced; refusing to overwrite')
         current = asset.stat()
@@ -62,10 +82,11 @@ def start(work):
             bpy.ops.file.pack_all()
             # Blender itself stages a .blend before replacing the existing file.
             # Remap relative library/texture paths to the real source directory.
-            if 'FINISHED' not in bpy.ops.wm.save_as_mainfile(filepath=str(source), copy=True,
-                                                            relative_remap=True):
+            if 'FINISHED' not in bpy.ops.wm.save_as_mainfile(
+                filepath=str(source), copy=True, relative_remap=True
+            ):
                 raise RuntimeError('Could not save Blender document')
-            os.replace(glb, asset)
+            replace_with_retry(glb, asset)
         original = asset.stat()
         state.update(error=None, dirty=False, saved=state['saved'] + 1)
 
@@ -73,7 +94,7 @@ def start(work):
 
     def after_save(filepath, *_):
         nonlocal publishing
-        if publishing or Path(filepath) != working:
+        if publishing or not filepath or Path(filepath).resolve() != working:
             return
         publishing = True
         try:
@@ -90,27 +111,43 @@ def start(work):
     attach = run_path(str(work / 'embed.py'))['attach']
     place = attach(int(config['parent']))
     last_layout = None
+    layout_error = None
     state['ready'] = True
     write_status()
 
     def tick():
-        nonlocal last_layout
+        nonlocal last_layout, layout_error
         try:
             layout_file = work / 'layout.json'
             layout = layout_file.read_bytes() if layout_file.exists() else b'null'
             if layout != last_layout:
                 place(json.loads(layout))
                 last_layout = layout
+                if layout_error is not None:
+                    if state['error'] == layout_error:
+                        state['error'] = None
+                    layout_error = None
+                    write_status()
+        except Exception as exc:
+            msg = str(exc)
+            layout_error = msg
+            if state['error'] != msg:
+                state['error'] = msg
+                write_status()
+
+        try:
             request = work / 'save'
             if request.exists():
-                token = request.read_text()
+                token = request.read_text(encoding='utf-8').strip()
                 request.unlink()
                 state['reply'] = token
-                if Path(bpy.data.filepath) != working:
+                active_path = bpy.data.filepath
+                if not active_path or Path(active_path).resolve() != working:
                     raise RuntimeError('The active Blender file is not the model document')
                 # The save handler exports the model and reports errors.
                 if 'FINISHED' not in bpy.ops.wm.save_as_mainfile(filepath=str(working)):
                     raise RuntimeError('Blender cancelled save')
+                write_status()
             if bpy.data.is_dirty and not state['dirty']:
                 state['dirty'] = True
                 write_status()

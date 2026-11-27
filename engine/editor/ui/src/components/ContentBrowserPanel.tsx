@@ -32,6 +32,7 @@ import {
   setDraggedAsset,
 } from "../lib/assetDrag";
 import { pickImportAssetFiles } from "../lib/tauriBridge";
+import { isEditableModel } from "../lib/modelTabs";
 import { BrpRpcError, type BrpClient } from "../protocol/brpClient";
 import type {
   AssetImportSettings,
@@ -42,6 +43,9 @@ import type {
 } from "../protocol/types";
 
 interface ContentBrowserPanelProps {
+  onCreateModel?: (path: string) => Promise<string>;
+  onOpenModel?: (asset: AssetRecord) => Promise<void>;
+  openModelIds: string[];
   snapshot: AssetRegistrySnapshot | null;
   currentFolder: string;
   onChangeFolder: (folder: string) => void;
@@ -125,6 +129,9 @@ function kindShortLabel(kind: AssetKind): string {
 }
 
 export function ContentBrowserPanel({
+  onCreateModel,
+  onOpenModel,
+  openModelIds,
   snapshot,
   currentFolder,
   onChangeFolder,
@@ -141,6 +148,7 @@ export function ContentBrowserPanel({
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
 
   const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [modelName, setModelName] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [renamePath, setRenamePath] = useState("");
   const [tagsDraft, setTagsDraft] = useState("");
@@ -171,6 +179,54 @@ export function ContentBrowserPanel({
       setBusyAction(false);
     }
   }
+
+  async function createModel() {
+    if (!onCreateModel || busyAction || modelName === null) return;
+    const base = modelName.trim().replace(/\.glb$/i, "").trim();
+    if (!base || base.startsWith(".") || base.endsWith(".") || /[\\/:*?"<>|]/.test(base)) {
+      setActionError("Enter a valid model file name without path separators.");
+      return;
+    }
+    setBusyAction(true);
+    setActionError(null);
+    try {
+      const id = await onCreateModel([currentFolder, `${base}.glb`].filter(Boolean).join("/"));
+      setSelectedUuid(id);
+      setModelName(null);
+      setKindFilter("all");
+      setSearch("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  function selectAsset(asset: AssetRecord) {
+    setSelectedUuid(asset.uuid);
+  }
+
+  function activateAsset(asset: AssetRecord) {
+    if (onOpenModel && isEditableModel(asset)) {
+      void onOpenModel(asset).catch((err) =>
+        setActionError(err instanceof Error ? err.message : String(err)),
+      );
+      return;
+    }
+    if (asset.kind === "scene" && onOpenScenePath && snapshot) {
+      onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
+    } else if (asset.kind === "audio") {
+      void previewAudio(asset.uuid);
+    } else {
+      onSpawnAssetAtCenter?.(asset);
+    }
+  }
+
+  // Close inline creation bars when switching or stopping projects.
+  useEffect(() => {
+    setModelName(null);
+    setNewFolderOpen(false);
+  }, [snapshot?.root_dir]);
 
   // Sync details editor drafts when selecting a different asset or updated revision.
   useEffect(() => {
@@ -457,8 +513,24 @@ export function ContentBrowserPanel({
           <button
             type="button"
             className="ghost-btn"
+            disabled={!onCreateModel || !snapshot || busyAction}
+            title={
+              onCreateModel
+                ? "Create a new Blender .glb model in this folder"
+                : "New Model requires the desktop editor with an active project"
+            }
+            onClick={() => {
+              setNewFolderOpen(false);
+              setModelName((prev) => (prev === null ? "New Model" : null));
+            }}
+          >
+            <Box size={13} /> New Model
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
             disabled={!brpClient || busyAction}
-            onClick={() => setNewFolderOpen((open) => !open)}
+            onClick={() => { setModelName(null); setNewFolderOpen((open) => !open); }}
             title="New folder inside current directory"
           >
             <FolderPlus size={13} />
@@ -526,6 +598,35 @@ export function ContentBrowserPanel({
             Cancel
           </button>
         </div>
+      )}
+
+      {modelName !== null && (
+        <form className="cb-inline-bar" onSubmit={(e) => { e.preventDefault(); void createModel(); }}>
+          <input
+            autoFocus
+            className="text-input"
+            aria-label="New model name"
+            value={modelName}
+            disabled={busyAction}
+            onFocus={(e) => e.target.select()}
+            onChange={(e) => setModelName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setModelName(null);
+            }}
+          />
+          <span className="muted">.glb</span>
+          <button type="submit" className="primary-btn" disabled={busyAction}>
+            {busyAction ? "Creating…" : "Create model"}
+          </button>
+          <button
+            type="button"
+            className="ghost-btn"
+            disabled={busyAction}
+            onClick={() => setModelName(null)}
+          >
+            Cancel
+          </button>
+        </form>
       )}
 
       {actionError && (
@@ -599,24 +700,21 @@ export function ContentBrowserPanel({
               {visibleAssets.map((asset) => {
                 const thumbUrl = thumbnails[`${asset.uuid}:${asset.source_hash}`];
                 const isSelected = asset.uuid === selectedUuid;
+                const isOpenModel = openModelIds.includes(asset.uuid);
+                const modelHint =
+                  isEditableModel(asset) && onOpenModel
+                    ? "Double-click to edit in Blender · "
+                    : "";
                 return (
                   <div
                     key={asset.uuid}
-                    className={`cb-card ${isSelected ? "selected" : ""}`}
+                    className={`cb-card ${isSelected ? "selected" : ""} ${isOpenModel ? "cb-card-open" : ""}`}
                     draggable
                     onDragStart={(e) => handleAssetDragStart(e, asset)}
                     onDragEnd={() => clearDraggedAsset()}
-                    onClick={() => setSelectedUuid(asset.uuid)}
-                    onDoubleClick={() => {
-                      if (asset.kind === "scene" && onOpenScenePath) {
-                        onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
-                      } else if (asset.kind === "audio") {
-                        void previewAudio(asset.uuid);
-                      } else if (onSpawnAssetAtCenter) {
-                        onSpawnAssetAtCenter(asset);
-                      }
-                    }}
-                    title={`${asset.relative_path}\nUUID: ${asset.uuid}\nDrag to Viewport or Inspector`}
+                    onClick={() => selectAsset(asset)}
+                    onDoubleClick={() => activateAsset(asset)}
+                    title={`${asset.relative_path}\nUUID: ${asset.uuid}\n${modelHint}Drag to Viewport or Inspector`}
                   >
                     <div className="cb-thumb-box">
                       {thumbUrl ? (
@@ -628,6 +726,11 @@ export function ContentBrowserPanel({
                         />
                       ) : (
                         renderKindIcon(asset.kind, 32)
+                      )}
+                      {isOpenModel && (
+                        <span className="cb-model-open-badge" title="Open in Blender tab">
+                          BLENDER
+                        </span>
                       )}
                       <span className="cb-badge">{kindShortLabel(asset.kind)}</span>
                     </div>
@@ -652,30 +755,26 @@ export function ContentBrowserPanel({
                   <span className="muted">FOLDER</span>
                 </div>
               ))}
-              {visibleAssets.map((asset) => (
-                <div
-                  key={asset.uuid}
-                  className={`cb-list-row ${asset.uuid === selectedUuid ? "selected" : ""}`}
-                  draggable
-                  onDragStart={(e) => handleAssetDragStart(e, asset)}
-                  onDragEnd={() => clearDraggedAsset()}
-                  onClick={() => setSelectedUuid(asset.uuid)}
-                  onDoubleClick={() => {
-                    if (asset.kind === "scene" && onOpenScenePath) {
-                      onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
-                    } else if (asset.kind === "audio") {
-                      void previewAudio(asset.uuid);
-                    } else {
-                      onSpawnAssetAtCenter?.(asset);
-                    }
-                  }}
-                >
-                  {renderKindIcon(asset.kind, 14)}
-                  <span className="cb-list-name truncate">{asset.relative_path}</span>
-                  <span className="muted">{kindShortLabel(asset.kind)}</span>
-                  <span className="muted">{formatBytes(asset.file_size)}</span>
-                </div>
-              ))}
+              {visibleAssets.map((asset) => {
+                const isOpenModel = openModelIds.includes(asset.uuid);
+                return (
+                  <div
+                    key={asset.uuid}
+                    className={`cb-list-row ${asset.uuid === selectedUuid ? "selected" : ""}`}
+                    draggable
+                    onDragStart={(e) => handleAssetDragStart(e, asset)}
+                    onDragEnd={() => clearDraggedAsset()}
+                    onClick={() => selectAsset(asset)}
+                    onDoubleClick={() => activateAsset(asset)}
+                  >
+                    {renderKindIcon(asset.kind, 14)}
+                    <span className="cb-list-name truncate">{asset.relative_path}</span>
+                    {isOpenModel && <span className="cb-model-open-pill">BLENDER</span>}
+                    <span className="muted">{kindShortLabel(asset.kind)}</span>
+                    <span className="muted">{formatBytes(asset.file_size)}</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -691,14 +790,49 @@ export function ContentBrowserPanel({
               <button
                 type="button"
                 className="ghost-btn danger"
-                disabled={busyAction}
+                disabled={busyAction || openModelIds.includes(selectedAsset.uuid)}
                 onClick={() => void handleDelete(false)}
-                title="Safe Delete asset and .b9meta"
+                title={
+                  openModelIds.includes(selectedAsset.uuid)
+                    ? "Close the Blender model tab before deleting"
+                    : "Safe Delete asset and .b9meta"
+                }
               >
                 <Trash2 size={12} />
                 Delete
               </button>
             </div>
+
+            {isEditableModel(selectedAsset) && (onOpenModel || onSpawnAssetAtCenter) && (
+              <div className="model-details-bar">
+                {onOpenModel && (
+                  <button
+                    type="button"
+                    className="primary"
+                    disabled={busyAction}
+                    onClick={() =>
+                      void onOpenModel(selectedAsset).catch((err) =>
+                        setActionError(err instanceof Error ? err.message : String(err)),
+                      )
+                    }
+                  >
+                    <Box size={12} />
+                    {openModelIds.includes(selectedAsset.uuid)
+                      ? "Focus Blender tab"
+                      : "Edit in Blender"}
+                  </button>
+                )}
+                {onSpawnAssetAtCenter && (
+                  <button
+                    type="button"
+                    disabled={busyAction}
+                    onClick={() => onSpawnAssetAtCenter(selectedAsset)}
+                  >
+                    Spawn in scene
+                  </button>
+                )}
+              </div>
+            )}
 
             {selectedAsset.kind === "audio" && (
               <div className="audio-preview-bar">
@@ -782,8 +916,14 @@ export function ContentBrowserPanel({
                   className="ghost-btn"
                   disabled={
                     busyAction ||
+                    openModelIds.includes(selectedAsset.uuid) ||
                     !renamePath.trim() ||
                     renamePath.trim() === selectedAsset.relative_path
+                  }
+                  title={
+                    openModelIds.includes(selectedAsset.uuid)
+                      ? "Close the Blender model tab before moving or renaming"
+                      : "Move or rename asset"
                   }
                   onClick={() => void handleMoveRename()}
                 >

@@ -2,7 +2,13 @@ mod models;
 pub mod project;
 pub mod supervisor;
 
-use std::path::Path;
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use project::ProjectSummary;
 use supervisor::{EngineHostStatus, EngineLogMessage, EngineSupervisor};
@@ -40,9 +46,13 @@ async fn start_engine_host(
     models: State<'_, models::Models>,
     project_path: String,
 ) -> Result<EngineHostStatus, String> {
-    if models.has_tabs() && supervisor.status().project_dir.as_deref() != Some(&project_path) {
-        return Err("Save or close the model tabs before switching projects".into());
+    let target_root = project::load_project_summary(Path::new(&project_path))
+        .map(|summary| std::path::PathBuf::from(summary.root_dir))
+        .unwrap_or_else(|_| std::path::PathBuf::from(&project_path));
+    if models.has_live_tabs_for_other_project(&target_root) {
+        return Err("Save or close the open Blender model tabs before switching projects".into());
     }
+    models.close_tabs_for_other_projects(&target_root);
     let sup = supervisor.inner().clone();
     tauri::async_runtime::spawn_blocking(move || sup.start(&app, &project_path))
         .await
@@ -53,7 +63,9 @@ async fn start_engine_host(
 async fn stop_engine_host(
     app: AppHandle,
     supervisor: State<'_, EngineSupervisor>,
+    models: State<'_, models::Models>,
 ) -> Result<EngineHostStatus, String> {
+    models.hide_all();
     let sup = supervisor.inner().clone();
     tauri::async_runtime::spawn_blocking(move || sup.stop(&app))
         .await
@@ -77,6 +89,7 @@ pub fn run() {
     if std::env::var_os("DISPLAY").is_some() && std::env::var_os("GDK_BACKEND").is_none() {
         gdk::set_allowed_backends("x11,wayland");
     }
+    let confirming_close = Arc::new(AtomicBool::new(false));
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -87,22 +100,42 @@ pub fn run() {
         })
         .manage(EngineSupervisor::new())
         .manage(models::Models::default())
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event
-                && window.state::<models::Models>().has_tabs()
-            {
-                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+        .on_window_event(move |window, event| match event {
+            tauri::WindowEvent::CloseRequested { api, .. } => {
+                let models = window.state::<models::Models>();
+                if !models.has_live_tabs() {
+                    models.clear();
+                    return;
+                }
                 api.prevent_close();
+                if confirming_close
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_err()
+                {
+                    return;
+                }
+                use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
                 let window = window.clone();
-                window.dialog().message("Quit the editor and discard unsaved model edits? Cancel to save your model tabs first.")
-                    .title("Open Blender models").buttons(MessageDialogButtons::OkCancel)
+                let flag = Arc::clone(&confirming_close);
+                window
+                    .dialog()
+                    .message(
+                        "Quit the editor and discard unsaved model edits? Cancel to save your model tabs first.",
+                    )
+                    .title("Open Blender models")
+                    .buttons(MessageDialogButtons::OkCancel)
                     .show(move |quit| {
+                        flag.store(false, Ordering::SeqCst);
                         if quit {
                             window.state::<models::Models>().clear();
                             let _ = window.close();
                         }
                     });
             }
+            tauri::WindowEvent::Destroyed => {
+                window.state::<models::Models>().clear();
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             list_sample_projects,
@@ -116,6 +149,7 @@ pub fn run() {
             models::create_model,
             models::open_model,
             models::model_layout,
+            models::hide_model_tabs,
             models::model_status,
             models::save_model,
             models::close_model,

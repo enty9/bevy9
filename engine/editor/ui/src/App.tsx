@@ -22,6 +22,7 @@ import {
   startEngineHost,
   subscribeEngineLogs,
   subscribeEngineStatus,
+  subscribeNativeDialogOpen,
   subscribeOsFileDrop,
   type EngineHostStatus,
   type EngineLogMessage,
@@ -59,6 +60,9 @@ import { InspectorPanel } from "./components/InspectorPanel";
 import { OutlinerPanel } from "./components/OutlinerPanel";
 import { Toolbar } from "./components/Toolbar";
 import { ViewportPanel } from "./components/ViewportPanel";
+import { ModelWorkspace } from "./components/ModelWorkspace";
+import { useModelTabs, type ModelTab } from "./lib/modelTabs";
+import { invoke } from "@tauri-apps/api/core";
 
 const DEFAULT_METRICS: FrameMetrics = {
   fps: 0,
@@ -164,6 +168,10 @@ export function App() {
   const [physicsDebug, setPhysicsDebug] = useState(false);
   const [busy, setBusy] = useState(false);
   const [bannerError, setBannerError] = useState<string | null>(null);
+  const [nativeDialogOpen, setNativeDialogOpen] = useState(false);
+  const models = useModelTabs(hostStatus.project_dir, setBannerError);
+
+  useEffect(() => subscribeNativeDialogOpen(setNativeDialogOpen), []);
 
   const frameListenersRef = useRef(new Set<FrameSubscriber>());
   const autoStartedRef = useRef(false);
@@ -428,6 +436,52 @@ export function App() {
     }
   }, [brpClient]);
 
+  const createModel = useCallback(
+    async (path: string) => {
+      if (!brpClient || !hostStatus.project_dir) {
+        throw new Error("Start a project first");
+      }
+      await invoke("create_model", { path, project: hostStatus.project_dir });
+      const snapshot = await brpClient.rescanAssets();
+      setAssetSnapshot(snapshot);
+      const asset = snapshot.assets.find((a) => a.relative_path === path);
+      if (!asset) {
+        throw new Error(`Created ${path}, but it has not been indexed yet`);
+      }
+      await models.open(asset);
+      return asset.uuid;
+    },
+    [brpClient, hostStatus.project_dir, models.open],
+  );
+
+  const handleModelSaved = useCallback(
+    async (tab: ModelTab) => {
+      if (!brpClient) {
+        return;
+      }
+      try {
+        const snapshot = await brpClient.rescanAssets();
+        setAssetSnapshot(snapshot);
+        appendLog({
+          timestamp_ms: Date.now(),
+          level: "info",
+          target: "blender",
+          message: `Published model '${tab.path}' and refreshed project assets`,
+        });
+      } catch (err) {
+        appendLog({
+          timestamp_ms: Date.now(),
+          level: "warn",
+          target: "blender",
+          message: `Saved model '${tab.path}', but asset rescan failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        });
+      }
+    },
+    [brpClient, appendLog],
+  );
+
   useEffect(() => {
     if (!ipcClient || !brpClient) {
       return;
@@ -486,6 +540,7 @@ export function App() {
       if (!brpClient) {
         return;
       }
+      models.setActive(null);
       try {
         const res = await brpClient.spawnAssetInViewport(
           asset.uuid,
@@ -500,7 +555,7 @@ export function App() {
         setBannerError(err instanceof Error ? err.message : String(err));
       }
     },
-    [brpClient, viewportState.width, viewportState.height],
+    [brpClient, viewportState.width, viewportState.height, models.setActive],
   );
 
   const consoleAlertCount = useMemo(
@@ -509,6 +564,10 @@ export function App() {
   );
 
   const handleStartForProject = useCallback(async (projectDir: string) => {
+    if (models.tabs.length && projectDir !== hostStatus.project_dir) {
+      setBannerError("Save or close the model tabs before switching projects.");
+      return;
+    }
     setBusy(true);
     setBannerError(null);
     setSelection([]);
@@ -527,7 +586,7 @@ export function App() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [models.tabs.length, hostStatus.project_dir]);
 
   const handleBrowseProject = useCallback(async () => {
     const folder = await pickProjectFolder();
@@ -542,6 +601,7 @@ export function App() {
       if (!brpClient) {
         return;
       }
+      models.setActive(null);
       setBusy(true);
       setBannerError(null);
       try {
@@ -557,7 +617,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [brpClient],
+    [brpClient, models.setActive],
   );
 
   const handleOpenScene = useCallback(
@@ -570,6 +630,7 @@ export function App() {
       if (!picked) {
         return;
       }
+      models.setActive(null);
       setBusy(true);
       setBannerError(null);
       try {
@@ -585,7 +646,7 @@ export function App() {
         setBusy(false);
       }
     },
-    [brpClient, activeProject?.scenes_dir],
+    [brpClient, activeProject?.scenes_dir, models.setActive],
   );
 
   const handleSaveSceneAs = useCallback(async () => {
@@ -979,6 +1040,7 @@ export function App() {
 
   useEffect(() => {
     function onWindowKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || models.active) return;
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       const isTextInput =
@@ -987,9 +1049,16 @@ export function App() {
         tag === "SELECT" ||
         target?.isContentEditable === true;
 
-      if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.code === "KeyS"
+      ) {
         event.preventDefault();
-        void handleSaveScene();
+        if (!event.repeat) {
+          void handleSaveScene();
+        }
         return;
       }
 
@@ -1038,6 +1107,7 @@ export function App() {
       window.removeEventListener("keydown", onWindowKeyDown);
     };
   }, [
+    models.active,
     handleSaveScene,
     handleUndo,
     handleRedo,
@@ -1100,6 +1170,11 @@ export function App() {
       }
     },
     [brpClient],
+  );
+
+  const openModelIds = useMemo(
+    () => models.tabs.map((t) => t.uuid),
+    [models.tabs],
   );
 
   return (
@@ -1177,35 +1252,47 @@ export function App() {
           />
         }
         center={
-          <ViewportPanel
-            sceneName={sceneName}
-            viewportMode={viewportState.viewport_mode}
-            cameraMode={viewportState.camera_mode}
-            width={viewportState.width}
-            height={viewportState.height}
-            ipcState={ipcState}
-            gizmoState={gizmoState}
-            physicsDebug={physicsDebug}
-            assets={assetSnapshot?.assets ?? []}
-            subscribeFrames={subscribeFrames}
-            onViewportInput={handleViewportInput}
-            onToggleViewportMode={handleToggleViewportMode}
-            onTogglePhysicsDebug={(enabled) =>
-              void handleTogglePhysicsDebug(enabled).catch((err) =>
-                setBannerError(err instanceof Error ? err.message : String(err)),
-              )
-            }
-            onChangeGizmoState={handleChangeGizmoState}
-            onDropAsset={(asset, vx, vy) =>
-              void handleSpawnAssetInViewport(asset, vx, vy)
-            }
-          />
+          <ModelWorkspace
+            tabs={models.tabs}
+            active={models.active}
+            occluded={nativeDialogOpen}
+            select={models.setActive}
+            close={models.close}
+            onModelSaved={handleModelSaved}
+          >
+            <ViewportPanel
+              sceneName={sceneName}
+              viewportMode={viewportState.viewport_mode}
+              cameraMode={viewportState.camera_mode}
+              width={viewportState.width}
+              height={viewportState.height}
+              ipcState={ipcState}
+              gizmoState={gizmoState}
+              physicsDebug={physicsDebug}
+              assets={assetSnapshot?.assets ?? []}
+              subscribeFrames={subscribeFrames}
+              onViewportInput={handleViewportInput}
+              onToggleViewportMode={handleToggleViewportMode}
+              onTogglePhysicsDebug={(enabled) =>
+                void handleTogglePhysicsDebug(enabled).catch((err) =>
+                  setBannerError(err instanceof Error ? err.message : String(err)),
+                )
+              }
+              onChangeGizmoState={handleChangeGizmoState}
+              onDropAsset={(asset, vx, vy) =>
+                void handleSpawnAssetInViewport(asset, vx, vy)
+              }
+            />
+          </ModelWorkspace>
         }
         activeBottomTab={activeBottomTab}
         onChangeBottomTab={setActiveBottomTab}
         consoleBadgeCount={consoleAlertCount}
         bottomContentBrowser={
           <ContentBrowserPanel
+            onCreateModel={isRunningInTauri() && hostStatus.project_dir ? createModel : undefined}
+            onOpenModel={isRunningInTauri() && hostStatus.project_dir ? models.open : undefined}
+            openModelIds={openModelIds}
             snapshot={assetSnapshot}
             currentFolder={activeAssetFolder}
             onChangeFolder={setActiveAssetFolder}
