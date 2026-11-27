@@ -9,6 +9,7 @@ members = [
   "crates/engine_audio",
   "crates/engine_render",
   "crates/engine_scene",
+  "crates/engine_scripting",
   "crates/engine_editor_bridge",
   "crates/engine_runtime",
 ]
@@ -41,6 +42,7 @@ engine_physics = { path = "crates/engine_physics" }
 engine_audio = { path = "crates/engine_audio" }
 engine_render = { path = "crates/engine_render" }
 engine_scene = { path = "crates/engine_scene" }
+engine_scripting = { path = "crates/engine_scripting" }
 engine_editor_bridge = { path = "crates/engine_editor_bridge" }
 engine_runtime = { path = "crates/engine_runtime" }
 
@@ -86,6 +88,7 @@ kira = "=0.12.1" # CPAL 0.17 matches this Bevy revision's ALSA dependency.
 notify = "8.2"
 rapier2d = { version = "0.30", features = ["enhanced-determinism", "debug-render"] }
 rapier3d = { version = "0.30", features = ["enhanced-determinism", "debug-render"] }
+rhai = { version = "1.27", features = ["sync", "serde"] }
 ron = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

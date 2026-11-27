@@ -1,0 +1,39 @@
+[package]
+name = "engine_scripting"
+description = "Rhai scripting runtime, ECS Reflect bridge, gameplay API, hot-reload, and diagnostics for Bevy9"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_math.workspace = true
+bevy_reflect.workspace = true
+bevy_time.workspace = true
+bevy_transform.workspace = true
+blake3.workspace = true
+crossbeam-channel.workspace = true
+engine_assets.workspace = true
+engine_audio.workspace = true
+engine_core.workspace = true
+engine_input.workspace = true
+engine_physics.workspace = true
+engine_protocol.workspace = true
+engine_scene.workspace = true
+notify.workspace = true
+rhai.workspace = true
+ron.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bevy_asset.workspace = true
+bevy_input.workspace = true
+uuid.workspace = true
