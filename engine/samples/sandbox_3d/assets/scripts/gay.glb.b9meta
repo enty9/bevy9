@@ -1,0 +1,18 @@
+(
+    schema_version: 1,
+    uuid: ("ce243b05-3c29-4d3d-b0e9-14529c3a03b2"),
+    kind: gltf_model,
+    source_hash: "cd86e80886d4428b5d6a575ea904799f48d30c79e478085c9a5858245b3cabf7",
+    tags: [],
+    dependencies: [],
+    import_settings: (
+        kind: "gltf",
+        scale: 1.0,
+        generate_normals_and_tangents: true,
+        load_meshes: true,
+        load_materials: true,
+        load_cameras: false,
+        load_lights: true,
+        load_animations: true,
+    ),
+)

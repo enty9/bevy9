@@ -2,7 +2,7 @@
     schema_version: 1,
     uuid: ("11111111-2222-4333-8444-555555555302"),
     kind: gltf_model,
-    source_hash: "c28138847562c156c09ffcbea57581c85ffd9a41dddd4d992061f64ed3c44170",
+    source_hash: "313bcf4e76d0b3324381ab4f999a86eed736e05e52264fce37dfb37c910d45e6",
     tags: [
         "crystal",
         "prop",

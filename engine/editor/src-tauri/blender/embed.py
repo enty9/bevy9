@@ -5,6 +5,29 @@ import sys
 import time
 
 
+def clear_wm_state(window):
+    """Discard the former top-level's ICCCM state before showing it as a child."""
+    import ctypes as c
+
+    x11 = c.CDLL('libX11.so.6')
+    x11.XOpenDisplay.argtypes = [c.c_char_p]
+    x11.XOpenDisplay.restype = c.c_void_p
+    x11.XInternAtom.argtypes = [c.c_void_p, c.c_char_p, c.c_int]
+    x11.XInternAtom.restype = c.c_ulong
+    x11.XDeleteProperty.argtypes = [c.c_void_p, c.c_ulong, c.c_ulong]
+    x11.XCloseDisplay.argtypes = [c.c_void_p]
+
+    display = x11.XOpenDisplay(None)
+    if not display:
+        raise RuntimeError('Could not open the Blender X11 display')
+    try:
+        atom = x11.XInternAtom(display, b'WM_STATE', True)
+        if atom:
+            x11.XDeleteProperty(display, int(window), atom)
+    finally:
+        x11.XCloseDisplay(display)
+
+
 def attach(parent):
     if sys.platform == 'win32':
         return attach_windows(parent)
@@ -34,6 +57,11 @@ def attach(parent):
     def place(rect):
         nonlocal visible
         if rect:
+            if not visible:
+                # Some WMs (e.g. xwayland-satellite) leave WithdrawnState on
+                # reparent. Blender treats that as minimized and skips resize
+                # events, including updating the height used to invert mouse Y.
+                clear_wm_state(window)
             xdo('windowmove', window, rect['x'], rect['y'], 'windowsize', window,
                 rect['width'], rect['height'], 'windowmap', window, 'windowraise', window)
             if not visible:
