@@ -23,11 +23,21 @@ pub mod prelude {
 }
 
 use bevy_app::{App, FixedUpdate, Plugin, PostUpdate, PreUpdate, Update};
-use bevy_ecs::schedule::{common_conditions::resource_exists, IntoScheduleConfigs};
+use bevy_ecs::{
+    observer::On,
+    schedule::{common_conditions::resource_exists, IntoScheduleConfigs},
+    system::Res,
+};
 use bevy_gizmos::gizmos::GizmoStorage;
 use bevy_picking::{backend::ray::RayMap, PickingSystems};
 use engine_core::schedule::{EngineFixedSet, EngineSet};
+use engine_protocol::{EditorLogEntry, LogLevel, ServerIpcMessage};
 use engine_render::picking::EditorOverlayGizmoGroup;
+use engine_scene::SceneSerializationFilter;
+use engine_scripting::{
+    allow_in_scene_filter, register_components, ScriptDiagnosticEvent, ScriptDiagnosticSeverity,
+    ScriptReloadedEvent,
+};
 
 pub use prelude::*;
 
@@ -37,6 +47,14 @@ pub struct EditorBridgePlugin;
 
 impl Plugin for EditorBridgePlugin {
     fn build(&self, app: &mut App) {
+        register_components(app);
+        if let Some(mut filter) = app
+            .world_mut()
+            .get_resource_mut::<SceneSerializationFilter>()
+        {
+            allow_in_scene_filter(&mut filter);
+        }
+
         if !app.world().contains_resource::<EditorBridgeConfig>() {
             app.init_resource::<EditorBridgeConfig>();
         }
@@ -50,6 +68,9 @@ impl Plugin for EditorBridgePlugin {
             .init_resource::<selection::BridgeDirtyFlags>()
             .init_resource::<ipc_server::LastBroadcastViewport>()
             .init_resource::<ipc_server::MetricsPublishState>();
+
+        app.add_observer(forward_script_diagnostic_to_ipc)
+            .add_observer(forward_script_reload_to_ipc);
 
         app.add_plugins(brp::build_remote_plugin());
         if config.enable_http_brp {
@@ -130,4 +151,59 @@ impl Plugin for EditorBridgePlugin {
             ),
         );
     }
+}
+
+fn forward_script_diagnostic_to_ipc(
+    event: On<ScriptDiagnosticEvent>,
+    ipc_server: Option<Res<EditorIpcServer>>,
+) {
+    let Some(server) = ipc_server else {
+        return;
+    };
+    let diag = &event.event().0;
+    let level = match diag.severity {
+        ScriptDiagnosticSeverity::Warning => LogLevel::Warn,
+        ScriptDiagnosticSeverity::Error => LogLevel::Error,
+    };
+    let entity_part = diag
+        .entity_label()
+        .map(|label| format!(" [{label}]"))
+        .unwrap_or_default();
+    let hook_part = diag
+        .hook
+        .as_deref()
+        .map(|hook| format!(" ({hook})"))
+        .unwrap_or_default();
+    let message = format!(
+        "{}{entity_part}{hook_part}: {}",
+        diag.location(),
+        diag.message
+    );
+    server.broadcast_message(&ServerIpcMessage::Log {
+        entry: EditorLogEntry {
+            level,
+            target: "engine_scripting".to_owned(),
+            message,
+        },
+    });
+}
+
+fn forward_script_reload_to_ipc(
+    event: On<ScriptReloadedEvent>,
+    ipc_server: Option<Res<EditorIpcServer>>,
+) {
+    let Some(server) = ipc_server else {
+        return;
+    };
+    let reloaded = event.event();
+    server.broadcast_message(&ServerIpcMessage::Log {
+        entry: EditorLogEntry {
+            level: LogLevel::Info,
+            target: "engine_scripting".to_owned(),
+            message: format!(
+                "Hot-reloaded script {} (revision {})",
+                reloaded.file, reloaded.revision
+            ),
+        },
+    });
 }

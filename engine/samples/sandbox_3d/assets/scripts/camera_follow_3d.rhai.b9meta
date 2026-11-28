@@ -1,0 +1,14 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555313"),
+    kind: script,
+    source_hash: "911b35a78261145051ce60e00ac1aa1f0372fa5ed3885af25cb480f86c6320e3",
+    tags: [
+        "camera",
+        "3d",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "generic",
+    ),
+)

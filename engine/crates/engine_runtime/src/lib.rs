@@ -33,6 +33,7 @@ use engine_physics::{EnginePhysicsPlugin, PhysicsDebugPlugin, PhysicsOptions};
 use engine_protocol::ViewportCameraMode;
 use engine_render::{EngineRenderPlugin, ViewportConfig};
 use engine_scene::{load_level_from_file, EngineScenePlugin, SceneCameraActivationPolicy};
+use engine_scripting::{EngineScriptingPlugin, ScriptExecutionOptions};
 
 /// Execution mode for `engine_runtime`.
 #[derive(ValueEnum, Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -299,12 +300,18 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
         device: mode != RuntimeMode::Headless,
         gameplay: mode == RuntimeMode::Window,
     });
+    app.insert_resource(if mode == RuntimeMode::Editor {
+        ScriptExecutionOptions::editor()
+    } else {
+        ScriptExecutionOptions::gameplay()
+    });
     app.add_plugins((
         EngineAssetsPlugin,
         EngineScenePlugin,
         EngineInputPlugin,
         EnginePhysicsPlugin,
         EngineAudioPlugin,
+        EngineScriptingPlugin,
     ));
     if mode != RuntimeMode::Headless {
         app.add_plugins(PhysicsDebugPlugin);

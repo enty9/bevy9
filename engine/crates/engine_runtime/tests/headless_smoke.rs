@@ -1,27 +1,39 @@
 //! Integration smoke tests for `engine_runtime`.
 
 use std::{
+    fs,
     path::PathBuf,
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Mutex,
     },
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 
 use bevy::{
     app::{AppExit, Last},
+    asset::Assets,
     diagnostic::FrameCount,
     ecs::schedule::IntoScheduleConfigs,
     ecs::system::Res,
+    input::keyboard::KeyCode,
+    math::{Quat, Vec3},
     time::TimeUpdateStrategy,
     transform::components::Transform,
 };
 use clap::Parser;
+use engine_audio::{AudioBackend, AudioBus, AudioEngine, AudioError, BusSettings, PlaySound, VoiceId};
 use engine_core::{EntityGuid, EntityGuidMap, ProjectManifest, ProjectPaths, WorldMode};
 use engine_editor_bridge::{DEFAULT_BRP_PORT, DEFAULT_IPC_PORT};
+use engine_input::{ForwardedInput, InputMappingAsset, ProjectInputMapping};
+use engine_physics::CharacterMotion2D;
 use engine_runtime::{build_app_with_options, RuntimeCli, RuntimeMode, RuntimeOptions};
-use engine_scene::ActiveScene;
+use engine_scene::{ActiveScene, SpriteDesc};
+use engine_scripting::{
+    RhaiBackend, ScriptBackend, ScriptComponent, ScriptDiagnostics, ScriptExecutionOptions,
+    ScriptSourceKey,
+};
 
 fn sample_project_dir(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../samples/{name}"))
@@ -189,5 +201,359 @@ fn headless_sandbox_3d_and_2d_load_startup_scenes() {
         assert!(app.world().get::<Transform>(ball).unwrap().translation.y < initial_y);
         let exit = app.run();
         assert_eq!(exit, AppExit::Success);
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingAudioBackend {
+    played: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl AudioBackend for RecordingAudioBackend {
+    fn play(&mut self, sound: &PlaySound) -> Result<VoiceId, AudioError> {
+        let mut played = self.played.lock().unwrap();
+        played.push(sound.path.clone());
+        Ok(VoiceId(played.len() as u64))
+    }
+
+    fn stop(&mut self, _voice: VoiceId) {}
+    fn set_bus(&mut self, _bus: AudioBus, _settings: BusSettings) {}
+    fn set_listener(&mut self, _position: Vec3, _orientation: Quat) {}
+    fn set_position(&mut self, _voice: VoiceId, _position: Vec3) {}
+    fn collect_finished(&mut self) {}
+}
+
+fn wait_for_input_mapping(app: &mut bevy::app::App) {
+    let handle = app
+        .world()
+        .get_resource::<ProjectInputMapping>()
+        .map(|m| m.0.clone())
+        .expect("sample project must configure input_mapping");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app
+        .world()
+        .resource::<Assets<InputMappingAsset>>()
+        .get(&handle)
+        .is_none()
+    {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for gameplay.input.ron asset to finish loading"
+        );
+        app.update();
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn sandbox_3d_and_2d_rhai_scripts_compile_and_simulate_without_errors() {
+    // 1. Direct RhaiBackend compilation check for every `.rhai` script in both samples.
+    let mut backend = RhaiBackend::default();
+    let sample_scripts = [
+        ("sandbox_3d", "assets/scripts/player_3d.rhai"),
+        ("sandbox_3d", "assets/scripts/collectible_trigger_3d.rhai"),
+        ("sandbox_3d", "assets/scripts/camera_follow_3d.rhai"),
+        ("sandbox_2d", "assets/scripts/player_2d.rhai"),
+        ("sandbox_2d", "assets/scripts/collectible_trigger_2d.rhai"),
+    ];
+    for (sample, rel) in sample_scripts {
+        let path = sample_project_dir(sample).join(rel);
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed reading {}: {err}", path.display()));
+        let key = ScriptSourceKey::Path(format!("{sample}/{rel}"));
+        let info = backend
+            .compile_source(&key, &path.display().to_string(), &source, None)
+            .unwrap_or_else(|err| panic!("Rhai compile failed for {}: {err}", path.display()));
+        assert!(
+            info.hooks.on_start
+                || info.hooks.on_update
+                || info.hooks.on_fixed_update
+                || info.hooks.on_trigger_enter,
+            "sample script {} should define at least one lifecycle hook",
+            path.display()
+        );
+    }
+
+    // 2. Headless simulation of `sandbox_3d`: physics, trigger, WASD + Space jump, audio, camera follow.
+    {
+        let cli = RuntimeCli {
+            project: Some(sample_project_dir("sandbox_3d")),
+            scene: None,
+            mode: RuntimeMode::Headless,
+            headless: true,
+            max_frames: None,
+            physics_debug: false,
+            title: None,
+            world_mode: None,
+            brp_port: DEFAULT_BRP_PORT,
+            ipc_port: DEFAULT_IPC_PORT,
+        };
+        let mut app = build_app_with_options(
+            &cli,
+            RuntimeOptions {
+                enable_logging: false,
+            },
+        )
+        .expect("sandbox_3d headless app should build");
+        assert!(app.world().resource::<ScriptExecutionOptions>().enabled);
+
+        let audio_backend = RecordingAudioBackend::default();
+        let played_3d = Arc::clone(&audio_backend.played);
+        app.insert_resource(AudioEngine::with_backend(audio_backend));
+        app.init_resource::<ForwardedInput>();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 60.0,
+        )));
+
+        wait_for_input_mapping(&mut app);
+
+        let hero_ent = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str("10000000-0000-4000-8000-000000000005").unwrap())
+            .expect("HeroCube must exist");
+        let trigger_ent = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str("10000000-0000-4000-8000-000000000008").unwrap())
+            .expect("Trigger zone must exist");
+        let cam_ent = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str("10000000-0000-4000-8000-000000000007").unwrap())
+            .expect("MainCamera3D must exist");
+
+        let initial_cam_pos = app.world().get::<Transform>(cam_ent).unwrap().translation;
+
+        // Let HeroCube land on the floor and AccentSphere fall through Trigger zone.
+        for _ in 0..45 {
+            app.update();
+        }
+        let x_before_move = app.world().get::<Transform>(hero_ent).unwrap().translation.x;
+
+        // Press D to move +X and Space to jump!
+        {
+            let mut forwarded = app.world_mut().resource_mut::<ForwardedInput>();
+            forwarded.keys.press(KeyCode::KeyD);
+            forwarded.keys.press(KeyCode::Space);
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<ForwardedInput>()
+            .keys
+            .release(KeyCode::Space);
+        for _ in 0..20 {
+            app.update();
+        }
+        app.world_mut()
+            .resource_mut::<ForwardedInput>()
+            .keys
+            .release(KeyCode::KeyD);
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let diags = app.world().resource::<ScriptDiagnostics>().entries();
+        assert!(
+            diags.is_empty(),
+            "sandbox_3d must run with zero script diagnostics, got: {diags:#?}"
+        );
+
+        let x_after_move = app.world().get::<Transform>(hero_ent).unwrap().translation.x;
+        assert!(
+            x_after_move > x_before_move + 0.1,
+            "HeroCube must move +X when KeyD is held (before={x_before_move}, after={x_after_move})"
+        );
+        let hero_jumps = app
+            .world()
+            .get::<ScriptComponent>(hero_ent)
+            .unwrap()
+            .properties
+            .get_int("jumps")
+            .unwrap_or(0);
+        assert!(hero_jumps >= 1, "HeroCube must jump when Space is pressed");
+
+        let trigger_props = &app
+            .world()
+            .get::<ScriptComponent>(trigger_ent)
+            .unwrap()
+            .properties;
+        assert!(
+            trigger_props.get_int("trigger_count").unwrap_or(0) >= 1,
+            "sandbox_3d Trigger zone must fire on_trigger_enter"
+        );
+        assert!(
+            trigger_props.get_int("total_score").unwrap_or(0) >= 10,
+            "sandbox_3d Trigger zone must increment total_score"
+        );
+        assert_ne!(
+            app.world().get::<Transform>(cam_ent).unwrap().translation,
+            initial_cam_pos,
+            "MainCamera3D follow script must update camera position"
+        );
+
+        let played_paths = played_3d.lock().unwrap();
+        assert!(
+            played_paths.iter().any(|p| p.ends_with("jump.wav")),
+            "sandbox_3d must play jump.wav, played: {played_paths:?}"
+        );
+        assert!(
+            played_paths.iter().any(|p| p.ends_with("pickup.wav")),
+            "sandbox_3d must play pickup.wav, played: {played_paths:?}"
+        );
+    }
+
+    // 3. Headless simulation of `sandbox_2d`: 2D character controller, flip_x, jump, trigger, audio.
+    {
+        let cli = RuntimeCli {
+            project: Some(sample_project_dir("sandbox_2d")),
+            scene: None,
+            mode: RuntimeMode::Headless,
+            headless: true,
+            max_frames: None,
+            physics_debug: false,
+            title: None,
+            world_mode: None,
+            brp_port: DEFAULT_BRP_PORT,
+            ipc_port: DEFAULT_IPC_PORT,
+        };
+        let mut app = build_app_with_options(
+            &cli,
+            RuntimeOptions {
+                enable_logging: false,
+            },
+        )
+        .expect("sandbox_2d headless app should build");
+        assert!(app.world().resource::<ScriptExecutionOptions>().enabled);
+
+        let audio_backend = RecordingAudioBackend::default();
+        let played_2d = Arc::clone(&audio_backend.played);
+        app.insert_resource(AudioEngine::with_backend(audio_backend));
+        app.init_resource::<ForwardedInput>();
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            1.0 / 60.0,
+        )));
+
+        wait_for_input_mapping(&mut app);
+
+        let player_ent = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str("20000000-0000-4000-8000-000000000003").unwrap())
+            .expect("PlayerSprite must exist");
+        let trigger_ent = app
+            .world()
+            .resource::<EntityGuidMap>()
+            .get_entity(EntityGuid::parse_str("20000000-0000-4000-8000-000000000007").unwrap())
+            .expect("2D Trigger zone must exist");
+
+        // Let PlayerSprite drop onto Physics floor and AccentCircle pass through Trigger zone.
+        for _ in 0..50 {
+            app.update();
+        }
+        assert!(
+            app.world()
+                .get::<CharacterMotion2D>(player_ent)
+                .is_some_and(|m| m.grounded),
+            "PlayerSprite must land on Physics floor"
+        );
+
+        let x_before_left = app
+            .world()
+            .get::<Transform>(player_ent)
+            .unwrap()
+            .translation
+            .x;
+        let y_grounded = app
+            .world()
+            .get::<Transform>(player_ent)
+            .unwrap()
+            .translation
+            .y;
+
+        // Move left (KeyA) and jump (Space) to test CharacterController2D + SpriteDesc.flip_x + jump audio!
+        {
+            let mut forwarded = app.world_mut().resource_mut::<ForwardedInput>();
+            forwarded.keys.press(KeyCode::KeyA);
+            forwarded.keys.press(KeyCode::Space);
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<ForwardedInput>()
+            .keys
+            .release(KeyCode::Space);
+        for _ in 0..10 {
+            app.update();
+        }
+        let y_mid_jump = app
+            .world()
+            .get::<Transform>(player_ent)
+            .unwrap()
+            .translation
+            .y;
+        let x_after_left = app
+            .world()
+            .get::<Transform>(player_ent)
+            .unwrap()
+            .translation
+            .x;
+        app.world_mut()
+            .resource_mut::<ForwardedInput>()
+            .keys
+            .release(KeyCode::KeyA);
+        for _ in 0..5 {
+            app.update();
+        }
+
+        let diags = app.world().resource::<ScriptDiagnostics>().entries();
+        assert!(
+            diags.is_empty(),
+            "sandbox_2d must run with zero script diagnostics, got: {diags:#?}"
+        );
+
+        assert!(
+            x_after_left < x_before_left - 10.0,
+            "PlayerSprite must move -X when KeyA is held (before={x_before_left}, after={x_after_left})"
+        );
+        assert!(
+            y_mid_jump > y_grounded + 10.0,
+            "PlayerSprite must jump upward when Space is pressed (ground={y_grounded}, air={y_mid_jump})"
+        );
+        assert!(
+            app.world().get::<SpriteDesc>(player_ent).unwrap().flip_x,
+            "PlayerSprite must flip horizontally via Reflect bridge when moving left"
+        );
+        let player_jumps = app
+            .world()
+            .get::<ScriptComponent>(player_ent)
+            .unwrap()
+            .properties
+            .get_int("jumps")
+            .unwrap_or(0);
+        assert!(player_jumps >= 1, "PlayerSprite jumps counter must increment");
+
+        let trigger_props = &app
+            .world()
+            .get::<ScriptComponent>(trigger_ent)
+            .unwrap()
+            .properties;
+        assert!(
+            trigger_props.get_int("trigger_count").unwrap_or(0) >= 1,
+            "sandbox_2d Trigger zone must fire on_trigger_enter"
+        );
+        assert!(
+            trigger_props.get_int("total_score").unwrap_or(0) >= 25,
+            "sandbox_2d Trigger zone must increment total_score"
+        );
+
+        let played_paths = played_2d.lock().unwrap();
+        assert!(
+            played_paths.iter().any(|p| p.ends_with("jump.wav")),
+            "sandbox_2d must play jump.wav, played: {played_paths:?}"
+        );
+        assert!(
+            played_paths.iter().any(|p| p.ends_with("pickup.wav")),
+            "sandbox_2d must play pickup.wav, played: {played_paths:?}"
+        );
     }
 }

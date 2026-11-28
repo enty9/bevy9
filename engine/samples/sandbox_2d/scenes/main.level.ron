@@ -40,6 +40,19 @@
                     "engine_scene::components::SceneEntity": (),
                     "engine_physics::Collider2D": Cuboid((60.0, 10.0)),
                     "engine_physics::TriggerVolume2D": (),
+                    "engine_scripting::component::ScriptComponent": (
+                        script: Some(("11111111-2222-4333-8444-555555555212")),
+                        script_path: "scripts/collectible_trigger_2d.rhai",
+                        enabled: true,
+                        properties: (
+                            values: {
+                                "pickup_sound": String("audio/pickup.wav"),
+                                "score_value": Int(25),
+                                "total_score": Int(0),
+                                "trigger_count": Int(0),
+                            },
+                        ),
+                    ),
                 },
             ),
             4294967256: (
@@ -99,6 +112,18 @@
                         scale: (1.0, 1.0, 1.0),
                     ),
                     "engine_core::guid::EntityGuid": ("20000000-0000-4000-8000-000000000003"),
+                    "engine_physics::CharacterController2D": (
+                        platformer: true,
+                        slope_degrees: 45.0,
+                        ground_snap: 4.0,
+                    ),
+                    "engine_physics::Collider2D": Cuboid((48.0, 48.0)),
+                    "engine_physics::RigidBody2D": (
+                        kind: Kinematic,
+                        velocity: (0.0, 0.0),
+                        gravity_scale: 1.0,
+                        ccd: false,
+                    ),
                     "engine_scene::components::SceneEntity": (),
                     "engine_scene::components::SpriteDesc": (
                         color: Srgba((
@@ -110,6 +135,22 @@
                         custom_size: Some((96.0, 96.0)),
                         flip_x: false,
                         flip_y: false,
+                    ),
+                    "engine_scripting::component::ScriptComponent": (
+                        script: Some(("11111111-2222-4333-8444-555555555211")),
+                        script_path: "scripts/player_2d.rhai",
+                        enabled: true,
+                        properties: (
+                            values: {
+                                "bump_impulse": Float(220.0),
+                                "facing_right": Bool(true),
+                                "jump_sound": String("audio/jump.wav"),
+                                "jump_speed": Float(520.0),
+                                "jumps": Int(0),
+                                "move_speed": Float(260.0),
+                                "respawn_y": Float(-340.0),
+                            },
+                        ),
                     ),
                 },
             ),

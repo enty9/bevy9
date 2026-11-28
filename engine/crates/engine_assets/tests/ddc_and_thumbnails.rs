@@ -16,6 +16,7 @@ use engine_assets::{
     TilemapLayer, CURRENT_TILEMAP_VERSION, THUMBNAIL_SIZE,
 };
 use engine_core::{AssetUuid, ProjectPaths};
+use engine_protocol::AssetKind;
 use image::{ImageFormat, Rgba, RgbaImage};
 
 struct TempProject {
@@ -271,8 +272,18 @@ fn sample_projects_assets_and_sidecars_load_cleanly() {
 
     let checker_uuid = AssetUuid::parse_str("11111111-2222-4333-8444-555555555301").unwrap();
     let crystal_uuid = AssetUuid::parse_str("11111111-2222-4333-8444-555555555302").unwrap();
+    let player3d_script_uuid =
+        AssetUuid::parse_str("11111111-2222-4333-8444-555555555311").unwrap();
+    let trigger3d_script_uuid =
+        AssetUuid::parse_str("11111111-2222-4333-8444-555555555312").unwrap();
+    let camera3d_script_uuid =
+        AssetUuid::parse_str("11111111-2222-4333-8444-555555555313").unwrap();
     let tiles_uuid = AssetUuid::parse_str("11111111-2222-4333-8444-555555555201").unwrap();
     let tilemap_uuid = AssetUuid::parse_str("11111111-2222-4333-8444-555555555202").unwrap();
+    let player2d_script_uuid =
+        AssetUuid::parse_str("11111111-2222-4333-8444-555555555211").unwrap();
+    let trigger2d_script_uuid =
+        AssetUuid::parse_str("11111111-2222-4333-8444-555555555212").unwrap();
 
     // Read-only verification on loaded sample registries:
     let mut reg3d = AssetRegistry::new(sandbox3d_assets, Some(samples_dir.join("sandbox_3d/scenes")));
@@ -282,6 +293,26 @@ fn sample_projects_assets_and_sidecars_load_cleanly() {
     assert!(!rep3d_second.changed);
     assert_eq!(reg3d.shared().get_by_path("checker_crate.png").unwrap().uuid, checker_uuid);
     assert_eq!(reg3d.shared().get_by_path("crystal.glb").unwrap().uuid, crystal_uuid);
+    for (rel, expected_uuid) in [
+        ("scripts/player_3d.rhai", player3d_script_uuid),
+        ("scripts/collectible_trigger_3d.rhai", trigger3d_script_uuid),
+        ("scripts/camera_follow_3d.rhai", camera3d_script_uuid),
+    ] {
+        let rec = reg3d
+            .shared()
+            .get_by_path(rel)
+            .unwrap_or_else(|| panic!("sandbox_3d script '{rel}' must be indexed"));
+        assert_eq!(rec.uuid, expected_uuid);
+        assert_eq!(rec.kind, AssetKind::Script);
+    }
+    assert_eq!(
+        reg3d.shared().get_by_path("audio/jump.wav").unwrap().kind,
+        AssetKind::Audio
+    );
+    assert_eq!(
+        reg3d.shared().get_by_path("audio/pickup.wav").unwrap().kind,
+        AssetKind::Audio
+    );
 
     let tilemap_path = sandbox2d_assets.join("demo.tilemap.ron");
     let mut reg2d = AssetRegistry::new(sandbox2d_assets, Some(samples_dir.join("sandbox_2d/scenes")));
@@ -296,4 +327,23 @@ fn sample_projects_assets_and_sidecars_load_cleanly() {
     let tilemap_rec = reg2d.shared().get_by_path("demo.tilemap.ron").unwrap();
     assert_eq!(tilemap_rec.uuid, tilemap_uuid);
     assert!(tilemap_rec.dependencies.contains(&tiles_uuid));
+    for (rel, expected_uuid) in [
+        ("scripts/player_2d.rhai", player2d_script_uuid),
+        ("scripts/collectible_trigger_2d.rhai", trigger2d_script_uuid),
+    ] {
+        let rec = reg2d
+            .shared()
+            .get_by_path(rel)
+            .unwrap_or_else(|| panic!("sandbox_2d script '{rel}' must be indexed"));
+        assert_eq!(rec.uuid, expected_uuid);
+        assert_eq!(rec.kind, AssetKind::Script);
+    }
+    assert_eq!(
+        reg2d.shared().get_by_path("audio/jump.wav").unwrap().kind,
+        AssetKind::Audio
+    );
+    assert_eq!(
+        reg2d.shared().get_by_path("audio/pickup.wav").unwrap().kind,
+        AssetKind::Audio
+    );
 }

@@ -194,3 +194,74 @@ fn file_watcher_detects_modified_asset_and_updates_hash() {
         "watcher must re-scan modified file and update source_hash"
     );
 }
+
+#[test]
+fn rhai_scripts_index_as_script_assets_with_sidecars_and_dependencies() {
+    let tmp = TempDirGuard::new("bevy9_assets_rhai");
+    let assets_dir = tmp.path.join("assets");
+    let scenes_dir = tmp.path.join("scenes");
+    fs::create_dir_all(assets_dir.join("scripts")).unwrap();
+    fs::create_dir_all(assets_dir.join("audio")).unwrap();
+    fs::create_dir_all(&scenes_dir).unwrap();
+
+    // Seed an audio clip first so we can verify UUID dependency scanning from `.rhai`.
+    let clip_path = assets_dir.join("audio/jump.wav");
+    fs::write(&clip_path, b"RIFF0000WAVEfmt ").unwrap();
+
+    let mut reg = AssetRegistry::new(assets_dir.clone(), Some(scenes_dir.clone()));
+    reg.scan_all().unwrap();
+    let clip_rec = reg
+        .get_by_path("audio/jump.wav")
+        .expect("jump.wav should be indexed");
+    assert_eq!(clip_rec.kind, AssetKind::Audio);
+
+    // Author a `.rhai` script referencing the audio clip UUID.
+    let script_path = assets_dir.join("scripts/player.rhai");
+    fs::write(
+        &script_path,
+        format!(
+            "fn on_start() {{\n    audio.play(\"{}\");\n}}\n",
+            clip_rec.uuid
+        ),
+    )
+    .unwrap();
+
+    let report = reg.scan_all().unwrap();
+    assert!(report.changed);
+    assert!(
+        assets_dir.join("scripts/player.rhai.b9meta").exists(),
+        ".b9meta sidecar must be created for .rhai scripts"
+    );
+
+    let script_rec = reg
+        .get_by_path("scripts/player.rhai")
+        .expect("player.rhai must be indexed");
+    assert_eq!(script_rec.kind, AssetKind::Script);
+    assert_eq!(script_rec.import_settings, AssetImportSettings::Generic);
+    assert_eq!(reg.dependencies_of(script_rec.uuid), vec![clip_rec.uuid]);
+    assert_eq!(reg.dependents_of(clip_rec.uuid), vec![script_rec.uuid]);
+
+    // Filter snapshot specifically for `AssetKind::Script`.
+    let filtered = reg.snapshot(&AssetListParams {
+        kind: Some(AssetKind::Script),
+        ..Default::default()
+    });
+    assert_eq!(filtered.assets.len(), 1);
+    assert_eq!(filtered.assets[0].uuid, script_rec.uuid);
+
+    // Renaming a `.rhai` script preserves its persistent `AssetUuid`.
+    let moved = reg
+        .move_or_rename(script_rec.uuid, "scripts/hero_controller.rhai")
+        .unwrap();
+    assert_eq!(moved.uuid, script_rec.uuid);
+    assert_eq!(moved.kind, AssetKind::Script);
+    assert!(assets_dir
+        .join("scripts/hero_controller.rhai.b9meta")
+        .exists());
+    assert!(!assets_dir.join("scripts/player.rhai.b9meta").exists());
+
+    // Subsequent scan with no disk changes reports unchanged.
+    let rescan = reg.scan_all().unwrap();
+    assert!(!rescan.changed);
+    assert!(rescan.modified_paths.is_empty());
+}

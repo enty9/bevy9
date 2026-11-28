@@ -36,6 +36,7 @@ use engine_scene::{
     capture_pie_snapshot, restore_pie_snapshot, ActiveScene, PieSnapshot, SceneCamera2d,
     SceneCamera3d, SceneCameraActivationPolicy, SceneEntity, SceneError,
 };
+use engine_scripting::{reset_runtime_state, run_update_scripts_system, ScriptExecutionOptions};
 use serde_json::{json, Value};
 
 use crate::{
@@ -245,6 +246,9 @@ impl PieController {
                 if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
                     physics.simulate = true;
                 }
+                if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+                    scripts.enabled = true;
+                }
                 if let Some(mut audio) = world.get_resource_mut::<AudioOptions>() {
                     audio.gameplay = true;
                 }
@@ -283,6 +287,9 @@ impl PieController {
                 if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
                     physics.simulate = false;
                 }
+                if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+                    scripts.enabled = false;
+                }
                 {
                     let mut pie = world.resource_mut::<PieSessionState>();
                     pie.state = PieState::Paused;
@@ -317,6 +324,9 @@ impl PieController {
                 if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
                     physics.simulate = false;
                 }
+                if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+                    scripts.enabled = false;
+                }
                 {
                     let mut pie = world.resource_mut::<PieSessionState>();
                     pie.state = PieState::Paused;
@@ -348,6 +358,9 @@ impl PieController {
         if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
             physics.simulate = true;
         }
+        if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+            scripts.enabled = true;
+        }
         world.resource_mut::<PieSessionState>().stepping = true;
 
         for _ in 0..steps {
@@ -365,6 +378,7 @@ impl PieController {
             if world.try_run_schedule(FixedMain).is_err() {
                 let _ = world.try_run_schedule(FixedUpdate);
             }
+            run_update_scripts_system(world);
 
             let mut pie = world.resource_mut::<PieSessionState>();
             if pie.fixed_steps == steps_before {
@@ -391,6 +405,9 @@ impl PieController {
 
         if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
             physics.simulate = false;
+        }
+        if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+            scripts.enabled = false;
         }
         {
             let mut pie = world.resource_mut::<PieSessionState>();
@@ -432,6 +449,10 @@ impl PieController {
         if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
             physics.simulate = false;
         }
+        if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+            scripts.enabled = false;
+        }
+        reset_runtime_state(world);
         if let Some(mut audio_opts) = world.get_resource_mut::<AudioOptions>() {
             audio_opts.gameplay = false;
         }
@@ -464,6 +485,10 @@ impl PieController {
                 *physics_3d = PhysicsWorld3D::default();
             }
         }
+        if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+            scripts.enabled = false;
+        }
+        reset_runtime_state(world);
 
         let saved_session = world.resource_mut::<PieSessionState>().saved_session.take();
         let mut restored_selection = Vec::new();
@@ -623,10 +648,14 @@ fn enter_pie(world: &mut World, target_state: PieState) -> Result<(), PieError> 
     if let Some(mut physics_3d) = world.get_resource_mut::<PhysicsWorld3D>() {
         *physics_3d = PhysicsWorld3D::default();
     }
+    reset_runtime_state(world);
     discard_fixed_overstep(world);
 
     if let Some(mut physics) = world.get_resource_mut::<PhysicsOptions>() {
         physics.simulate = target_state.is_playing();
+    }
+    if let Some(mut scripts) = world.get_resource_mut::<ScriptExecutionOptions>() {
+        scripts.enabled = target_state.is_playing();
     }
     if let Some(mut audio_opts) = world.get_resource_mut::<AudioOptions>() {
         audio_opts.gameplay = true;

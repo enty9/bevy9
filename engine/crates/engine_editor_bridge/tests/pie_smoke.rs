@@ -67,6 +67,10 @@ use engine_scene::{
     reset_to_new_scene, spawn_preset, ActiveScene, EngineScenePlugin, PieRuntimeEntity,
     SceneCamera3d, SceneCameraActivationPolicy, SceneEntity,
 };
+use engine_scripting::{
+    ActiveScriptVoices, EngineScriptingPlugin, PendingScriptContacts, PendingScriptImpulses,
+    ScriptComponent, ScriptExecutionOptions, ScriptProperties, ScriptRuntime,
+};
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use tungstenite::{stream::MaybeTlsStream, Message, WebSocket};
@@ -278,6 +282,7 @@ fn setup_full_pie_app(
             domain: InputDomain::Editor,
             ..Default::default()
         })
+        .insert_resource(ScriptExecutionOptions::editor())
         .insert_resource(EditorBridgeConfig {
             brp_port: brp_port.unwrap_or(0),
             ipc_port: 0,
@@ -311,6 +316,7 @@ fn setup_full_pie_app(
         EngineInputPlugin,
         EnginePhysicsPlugin,
         EngineAudioPlugin,
+        EngineScriptingPlugin,
         EngineRenderPlugin,
         EditorBridgePlugin,
     ))
@@ -1269,4 +1275,347 @@ fn pie_2d_scene_camera_physics_and_idempotent_transitions() {
             (PieState::Playing, PieState::Editing),
         ]
     );
+}
+
+#[test]
+fn pie_scripting_play_pause_step_stop_and_zero_leaks() {
+    let temp_project = TempDirGuard::new("pie_script_smoke");
+    let clip_path = temp_project.path.join("assets").join("beep.wav");
+    fs::write(&clip_path, b"RIFF0000WAVEfmt ").expect("dummy wav should write");
+    let scripts_dir = temp_project.path.join("assets").join("scripts");
+    fs::create_dir_all(&scripts_dir).expect("scripts dir should create");
+    fs::write(
+        scripts_dir.join("mover.rhai"),
+        r#"
+        let local_starts = 0;
+        let local_updates = 0;
+        let local_fixed = 0;
+
+        fn on_start() {
+            local_starts += 1;
+            props.starts = local_starts;
+            audio.play_with_options("beep.wav", #{ bus: "sfx", looping: true });
+        }
+
+        fn on_update(dt) {
+            local_updates += 1;
+            props.updates = local_updates;
+            transform.translate(props.speed * dt, 0.0, 0.0);
+        }
+
+        fn on_fixed_update(dt) {
+            local_fixed += 1;
+            props.fixed_ticks = local_fixed;
+        }
+        "#,
+    )
+    .expect("mover.rhai should write");
+
+    let mock_audio = MockAudioBackend::default();
+    let audio_state = Arc::clone(&mock_audio.state);
+    let mut app = setup_full_pie_app(None, false, Some(&temp_project.path), Some(mock_audio));
+
+    let script_uuid = {
+        let mut reg = app.world_mut().resource_mut::<AssetRegistry>();
+        reg.scan_all().expect("asset scan should succeed");
+        let rec = reg
+            .get_by_path("scripts/mover.rhai")
+            .expect("mover.rhai must be indexed");
+        assert_eq!(rec.kind, engine_protocol::AssetKind::Script);
+        rec.uuid
+    };
+
+    let initial_tfm = Transform::from_xyz(1.0, 2.0, 3.0);
+    let initial_props = ScriptProperties::new()
+        .with("speed", 6.0_f64)
+        .with("starts", 0_i64)
+        .with("updates", 0_i64)
+        .with("fixed_ticks", 0_i64);
+    let mut initial_script = ScriptComponent::from_uuid(script_uuid).with_properties(initial_props);
+    initial_script.script_path = "scripts/mover.rhai".to_owned();
+
+    let (actor_ent, actor_guid) = spawn_preset(
+        app.world_mut(),
+        EntityPresetKind::Cube3d,
+        Some("ScriptedActor".to_owned()),
+        None,
+        Some(initial_tfm),
+    );
+    app.world_mut()
+        .entity_mut(actor_ent)
+        .insert(initial_script.clone());
+
+    // 1. In Editing mode, scripts remain disabled and untouched.
+    assert!(!app.world().resource::<ScriptExecutionOptions>().enabled);
+    for _ in 0..4 {
+        thread::sleep(Duration::from_millis(10));
+        app.update();
+    }
+    assert_eq!(app.world().get::<Transform>(actor_ent), Some(&initial_tfm));
+    assert_eq!(
+        app.world()
+            .get::<ScriptComponent>(actor_ent)
+            .unwrap()
+            .properties
+            .get_int("starts"),
+        Some(0)
+    );
+    assert!(audio_state.lock().unwrap().active_voices.is_empty());
+
+    // 2. Edit -> Play: scripts execute, transform advances, audio voice starts.
+    assert_eq!(
+        PieController::play(app.world_mut()).unwrap().state,
+        PieState::Playing
+    );
+    assert!(app.world().resource::<ScriptExecutionOptions>().enabled);
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while app.world().resource::<PieSessionState>().fixed_steps() < 3 {
+        assert!(Instant::now() < deadline, "PIE fixed steps must advance");
+        thread::sleep(Duration::from_millis(12));
+        app.update();
+    }
+
+    let live_actor = app
+        .world()
+        .resource::<EntityGuidMap>()
+        .get_entity(actor_guid)
+        .unwrap();
+    let live_comp = app
+        .world()
+        .get::<ScriptComponent>(live_actor)
+        .unwrap()
+        .clone();
+    assert_eq!(live_comp.properties.get_int("starts"), Some(1));
+    assert!(live_comp.properties.get_int("updates").unwrap_or(0) >= 1);
+    assert!(live_comp.properties.get_int("fixed_ticks").unwrap_or(0) >= 3);
+    let x_during_play = app
+        .world()
+        .get::<Transform>(live_actor)
+        .unwrap()
+        .translation
+        .x;
+    assert!(
+        x_during_play > initial_tfm.translation.x + 0.01,
+        "script must advance transform during Play (x={x_during_play})"
+    );
+    assert!(
+        !audio_state.lock().unwrap().active_voices.is_empty(),
+        "script audio voice must be active during Play"
+    );
+
+    // 3. Play -> Pause: scripting freezes while preserving live scope and state.
+    assert_eq!(
+        PieController::pause(app.world_mut()).unwrap().state,
+        PieState::Paused
+    );
+    assert!(!app.world().resource::<ScriptExecutionOptions>().enabled);
+    assert!(
+        app.world()
+            .resource::<ScriptRuntime>()
+            .backend()
+            .has_entity_instance(live_actor),
+        "Pause must preserve live script scope"
+    );
+
+    let paused_x = app
+        .world()
+        .get::<Transform>(live_actor)
+        .unwrap()
+        .translation
+        .x;
+    let paused_updates = app
+        .world()
+        .get::<ScriptComponent>(live_actor)
+        .unwrap()
+        .properties
+        .get_int("updates")
+        .unwrap();
+    let paused_fixed = app
+        .world()
+        .get::<ScriptComponent>(live_actor)
+        .unwrap()
+        .properties
+        .get_int("fixed_ticks")
+        .unwrap();
+
+    for _ in 0..5 {
+        thread::sleep(Duration::from_millis(10));
+        app.update();
+    }
+    assert_eq!(
+        app.world()
+            .get::<Transform>(live_actor)
+            .unwrap()
+            .translation
+            .x,
+        paused_x
+    );
+    assert_eq!(
+        app.world()
+            .get::<ScriptComponent>(live_actor)
+            .unwrap()
+            .properties
+            .get_int("updates"),
+        Some(paused_updates)
+    );
+    assert_eq!(
+        app.world()
+            .get::<ScriptComponent>(live_actor)
+            .unwrap()
+            .properties
+            .get_int("fixed_ticks"),
+        Some(paused_fixed)
+    );
+
+    // 4. Pause -> Step(2): deterministically advances fixed + update hooks by 2 steps, then re-pauses.
+    let stepped = PieController::step(app.world_mut(), 2).unwrap();
+    assert_eq!(stepped.state, PieState::Paused);
+    assert!(!app.world().resource::<ScriptExecutionOptions>().enabled);
+
+    let stepped_comp = app
+        .world()
+        .get::<ScriptComponent>(live_actor)
+        .unwrap()
+        .clone();
+    assert_eq!(
+        stepped_comp.properties.get_int("starts"),
+        Some(1),
+        "Step must NOT re-trigger on_start"
+    );
+    assert_eq!(
+        stepped_comp.properties.get_int("fixed_ticks"),
+        Some(paused_fixed + 2)
+    );
+    assert_eq!(
+        stepped_comp.properties.get_int("updates"),
+        Some(paused_updates + 2)
+    );
+    let stepped_x = app
+        .world()
+        .get::<Transform>(live_actor)
+        .unwrap()
+        .translation
+        .x;
+    assert!(
+        stepped_x > paused_x + 0.05,
+        "Step must advance script translation (before={paused_x}, after={stepped_x})"
+    );
+
+    // Remains frozen after Step.
+    for _ in 0..3 {
+        thread::sleep(Duration::from_millis(10));
+        app.update();
+    }
+    assert_eq!(
+        app.world()
+            .get::<ScriptComponent>(live_actor)
+            .unwrap()
+            .properties
+            .get_int("updates"),
+        Some(paused_updates + 2)
+    );
+
+    // 5. Pause -> Play (Resume): continues from preserved scope without restarting on_start.
+    assert_eq!(
+        PieController::play(app.world_mut()).unwrap().state,
+        PieState::Playing
+    );
+    assert!(app.world().resource::<ScriptExecutionOptions>().enabled);
+    let target_fixed = stepped.fixed_steps + 2;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while app.world().resource::<PieSessionState>().fixed_steps() < target_fixed {
+        assert!(Instant::now() < deadline, "resumed PIE must advance");
+        thread::sleep(Duration::from_millis(12));
+        app.update();
+    }
+    assert_eq!(
+        app.world()
+            .get::<ScriptComponent>(live_actor)
+            .unwrap()
+            .properties
+            .get_int("starts"),
+        Some(1)
+    );
+    assert!(
+        app.world()
+            .get::<ScriptComponent>(live_actor)
+            .unwrap()
+            .properties
+            .get_int("updates")
+            .unwrap()
+            > paused_updates + 2
+    );
+
+    // 6. Play -> Stop: resets scripting runtime, stops script audio voices, restores exact snapshot!
+    assert_eq!(
+        PieController::stop(app.world_mut()).unwrap().state,
+        PieState::Editing
+    );
+    app.update();
+
+    assert!(!app.world().resource::<ScriptExecutionOptions>().enabled);
+    assert!(
+        audio_state.lock().unwrap().active_voices.is_empty(),
+        "script-triggered audio voices must be stopped on PIE Stop"
+    );
+    assert!(app.world().resource::<ActiveScriptVoices>().is_empty());
+    assert!(app.world().resource::<PendingScriptContacts>().is_empty());
+    assert!(app
+        .world()
+        .resource::<PendingScriptImpulses>()
+        .impulses_3d
+        .is_empty());
+    assert!(app
+        .world()
+        .resource::<PendingScriptImpulses>()
+        .impulses_2d
+        .is_empty());
+
+    let restored_actor = app
+        .world()
+        .resource::<EntityGuidMap>()
+        .get_entity(actor_guid)
+        .expect("ScriptedActor restored after Stop");
+    assert!(!app
+        .world()
+        .resource::<ScriptRuntime>()
+        .backend()
+        .has_entity_instance(restored_actor));
+    assert_eq!(
+        app.world().get::<Transform>(restored_actor),
+        Some(&initial_tfm)
+    );
+    assert_eq!(
+        app.world().get::<ScriptComponent>(restored_actor),
+        Some(&initial_script)
+    );
+
+    // 7. Second Play -> Stop cycle runs on_start cleanly from 0 -> 1 with zero leaked state.
+    assert_eq!(
+        PieController::play(app.world_mut()).unwrap().state,
+        PieState::Playing
+    );
+    let step_second = PieController::step(app.world_mut(), 1).unwrap();
+    assert_eq!(step_second.fixed_steps, 1);
+    let second_actor = app
+        .world()
+        .resource::<EntityGuidMap>()
+        .get_entity(actor_guid)
+        .unwrap();
+    let second_props = &app
+        .world()
+        .get::<ScriptComponent>(second_actor)
+        .unwrap()
+        .properties;
+    assert_eq!(second_props.get_int("starts"), Some(1));
+    assert_eq!(second_props.get_int("fixed_ticks"), Some(1));
+    assert_eq!(second_props.get_int("updates"), Some(1));
+
+    assert_eq!(
+        PieController::stop(app.world_mut()).unwrap().state,
+        PieState::Editing
+    );
+    assert!(audio_state.lock().unwrap().active_voices.is_empty());
+    assert!(app.world().resource::<ActiveScriptVoices>().is_empty());
 }

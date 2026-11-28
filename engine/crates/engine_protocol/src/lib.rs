@@ -354,6 +354,19 @@ mod tests {
         assert_eq!(asset_back, asset_rec);
 
         assert_eq!(
+            serde_json::to_string(&AssetKind::Script).unwrap(),
+            "\"script\""
+        );
+        assert_eq!(
+            serde_json::from_str::<AssetKind>("\"script\"").unwrap(),
+            AssetKind::Script
+        );
+        assert_eq!(
+            AssetImportSettings::default_for_kind(AssetKind::Script),
+            AssetImportSettings::Generic
+        );
+
+        assert_eq!(
             serde_json::to_string(&ViewportCameraMode::Mode3D).unwrap(),
             "\"3d\""
         );

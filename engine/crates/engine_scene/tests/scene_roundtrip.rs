@@ -26,6 +26,10 @@ use engine_physics::{
 };
 use engine_protocol::EntityPresetKind;
 use engine_scene::prelude::*;
+use engine_scripting::{
+    allow_in_scene_filter, register_components as register_script_components, ScriptComponent,
+    ScriptProperties,
+};
 use serde_json::json;
 
 fn setup_scene_app(mode: WorldMode, allow_scene_cameras: bool) -> App {
@@ -45,6 +49,13 @@ fn setup_scene_app(mode: WorldMode, allow_scene_cameras: bool) -> App {
         .init_asset::<Mesh>()
         .init_asset::<StandardMaterial>()
         .init_asset::<ColorMaterial>();
+    register_script_components(&mut app);
+    if let Some(mut filter) = app
+        .world_mut()
+        .get_resource_mut::<SceneSerializationFilter>()
+    {
+        allow_in_scene_filter(&mut filter);
+    }
     app
 }
 
@@ -643,4 +654,55 @@ fn write_reflected_component_switches_collider3d_between_cuboid_and_ball() {
             .unwrap_or_else(|err| panic!("failed to write {payload}: {err}"));
         assert_eq!(app.world().get::<Collider3D>(entity), Some(&expected));
     }
+}
+
+#[test]
+fn script_component_round_trips_in_level_ron() {
+    let mut source_app = setup_scene_app(WorldMode::Mode3D, true);
+    let script_uuid = AssetUuid::new();
+    let entity_guid = EntityGuid::new();
+    let script = ScriptComponent::from_uuid(script_uuid)
+        .with_enabled(true)
+        .with_properties(
+            ScriptProperties::new()
+                .with("move_speed", 5.5_f64)
+                .with("jumps", 2_i64)
+                .with("active", true)
+                .with("label", "player")
+                .with("dir2", Vec2::new(1.0, -0.5))
+                .with("offset3", Vec3::new(0.0, 2.0, 4.0)),
+        );
+    let mut script = script;
+    script.script_path = "scripts/player_3d.rhai".to_owned();
+
+    source_app.world_mut().spawn((
+        SceneEntity,
+        entity_guid,
+        Name::new("ScriptedPlayer"),
+        Transform::from_xyz(1.0, 2.0, 3.0),
+        script.clone(),
+    ));
+
+    let ron = save_level_to_string(
+        source_app.world(),
+        &LevelMetadata {
+            name: "Scripted Level".to_owned(),
+            world_mode: WorldMode::Mode3D,
+        },
+    )
+    .expect("scripted level should serialize cleanly");
+
+    let mut target_app = setup_scene_app(WorldMode::Mode3D, true);
+    load_level_from_str(target_app.world_mut(), &ron)
+        .expect("scripted level should deserialize cleanly");
+
+    let loaded_entity = target_app
+        .world()
+        .resource::<EntityGuidMap>()
+        .get_entity(entity_guid)
+        .expect("ScriptedPlayer GUID restored");
+    assert_eq!(
+        target_app.world().get::<ScriptComponent>(loaded_entity),
+        Some(&script)
+    );
 }

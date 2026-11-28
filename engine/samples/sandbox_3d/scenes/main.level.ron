@@ -138,6 +138,21 @@
                             alpha: 1.0,
                         ),
                     ),
+                    "engine_scripting::component::ScriptComponent": (
+                        script: Some(("11111111-2222-4333-8444-555555555311")),
+                        script_path: "scripts/player_3d.rhai",
+                        enabled: true,
+                        properties: (
+                            values: {
+                                "ground_check_dist": Float(0.75),
+                                "jump_impulse": Float(7.5),
+                                "jump_sound": String("audio/jump.wav"),
+                                "jumps": Int(0),
+                                "move_speed": Float(5.5),
+                                "respawn_y": Float(-5.0),
+                            },
+                        ),
+                    ),
                 },
             ),
             4294966847: (
@@ -205,6 +220,19 @@
                         active: true,
                     ),
                     "engine_scene::components::SceneEntity": (),
+                    "engine_scripting::component::ScriptComponent": (
+                        script: Some(("11111111-2222-4333-8444-555555555313")),
+                        script_path: "scripts/camera_follow_3d.rhai",
+                        enabled: true,
+                        properties: (
+                            values: {
+                                "follow_offset": Vec3((3.8, 2.6, 5.6)),
+                                "look_height": Float(0.4),
+                                "smoothness": Float(6.0),
+                                "target_name": String("HeroCube"),
+                            },
+                        ),
+                    ),
                 },
             ),
             4294966849: (
@@ -219,6 +247,20 @@
                     "engine_physics::Collider3D": Cuboid((0.9, 0.15, 0.9)),
                     "engine_physics::TriggerVolume3D": (),
                     "engine_scene::components::SceneEntity": (),
+                    "engine_scripting::component::ScriptComponent": (
+                        script: Some(("11111111-2222-4333-8444-555555555312")),
+                        script_path: "scripts/collectible_trigger_3d.rhai",
+                        enabled: true,
+                        properties: (
+                            values: {
+                                "boost_impulse": Float(4.5),
+                                "pickup_sound": String("audio/pickup.wav"),
+                                "score_value": Int(10),
+                                "total_score": Int(0),
+                                "trigger_count": Int(0),
+                            },
+                        ),
+                    ),
                 },
             ),
         },

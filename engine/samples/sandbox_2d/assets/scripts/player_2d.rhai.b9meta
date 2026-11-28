@@ -1,0 +1,15 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555211"),
+    kind: script,
+    source_hash: "e3ee4a9c193f1bcf5e10b418c4ad86191fa0e045d856f955bdfa875808956b81",
+    tags: [
+        "gameplay",
+        "player",
+        "2d",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "generic",
+    ),
+)

@@ -22,6 +22,7 @@ engine_core = { workspace = true }
 engine_protocol = { workspace = true }
 engine_scene = { workspace = true }
 engine_render = { workspace = true }
+engine_scripting = { workspace = true }
 engine_editor_bridge = { workspace = true }
 anyhow = { workspace = true }
 bevy_settings = { workspace = true }

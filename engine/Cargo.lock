@@ -2829,6 +2829,7 @@ dependencies = [
  "engine_protocol",
  "engine_render",
  "engine_scene",
+ "engine_scripting",
  "serde",
  "serde_json",
  "tracing",
@@ -2929,6 +2930,7 @@ dependencies = [
  "engine_protocol",
  "engine_render",
  "engine_scene",
+ "engine_scripting",
  "tracing",
 ]
 
@@ -2959,6 +2961,7 @@ dependencies = [
  "engine_core",
  "engine_physics",
  "engine_protocol",
+ "engine_scripting",
  "ron",
  "serde",
  "serde_json",

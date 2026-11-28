@@ -1,0 +1,14 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555221"),
+    kind: audio,
+    source_hash: "be288466a35122236a2220af503997ff084652bb3c262ed17cee258b4d820f21",
+    tags: [
+        "sfx",
+        "jump",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "generic",
+    ),
+)

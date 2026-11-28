@@ -1,0 +1,14 @@
+(
+    schema_version: 1,
+    uuid: ("11111111-2222-4333-8444-555555555322"),
+    kind: audio,
+    source_hash: "e4c66521fb7d4d3e69117259d0eccb999b1cccbfdb3283ad5d46ff78d2b7a06a",
+    tags: [
+        "sfx",
+        "pickup",
+    ],
+    dependencies: [],
+    import_settings: (
+        kind: "generic",
+    ),
+)
