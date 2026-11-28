@@ -1054,6 +1054,7 @@ button.ghost-btn:hover:not(:disabled) {
 .add-component-list {
   max-height: 240px;
   overflow: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2428,20 +2429,6 @@ button.ghost-btn:hover:not(:disabled) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.script-path-control {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.script-path-control .text-input {
-  flex: 1;
-  min-width: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
 }
 
 .script-hint {

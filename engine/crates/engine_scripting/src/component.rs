@@ -257,17 +257,14 @@ impl ScriptProperties {
 
 /// Authored script component attached to scene entities.
 ///
-/// Supports both UUID-based asset references (`script`) and path-based references
-/// (`script_path`), alongside inspector-editable [`ScriptProperties`].
+/// References a `.rhai` asset via persistent [`AssetUuid`] (`script`) resolved
+/// through `AssetRegistry`, alongside inspector-editable [`ScriptProperties`].
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Component, Default, Serialize, Deserialize, PartialEq)]
 pub struct ScriptComponent {
     /// Persistent [`AssetUuid`] of a `.rhai` asset indexed in `AssetRegistry`.
     #[serde(default)]
     pub script: Option<AssetUuid>,
-    /// Fallback relative (or absolute) path to a `.rhai` file when `script` is unset or unresolved.
-    #[serde(default)]
-    pub script_path: String,
     /// Whether this entity's script lifecycle hooks execute when scripting is active.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -284,7 +281,6 @@ impl Default for ScriptComponent {
     fn default() -> Self {
         Self {
             script: None,
-            script_path: String::new(),
             enabled: true,
             properties: ScriptProperties::new(),
         }
@@ -292,23 +288,11 @@ impl Default for ScriptComponent {
 }
 
 impl ScriptComponent {
-    /// Creates an enabled [`ScriptComponent`] referencing a script file by path.
-    #[must_use]
-    pub fn from_path(path: impl Into<String>) -> Self {
-        Self {
-            script: None,
-            script_path: path.into(),
-            enabled: true,
-            properties: ScriptProperties::new(),
-        }
-    }
-
     /// Creates an enabled [`ScriptComponent`] referencing a script asset by [`AssetUuid`].
     #[must_use]
     pub fn from_uuid(uuid: AssetUuid) -> Self {
         Self {
             script: Some(uuid),
-            script_path: String::new(),
             enabled: true,
             properties: ScriptProperties::new(),
         }
@@ -339,9 +323,9 @@ impl ScriptComponent {
         self
     }
 
-    /// Returns `true` when neither [`Self::script`] nor [`Self::script_path`] is configured.
+    /// Returns `true` when [`Self::script`] is unassigned.
     #[must_use]
-    pub fn is_unassigned(&self) -> bool {
-        self.script.is_none() && self.script_path.trim().is_empty()
+    pub const fn is_unassigned(&self) -> bool {
+        self.script.is_none()
     }
 }

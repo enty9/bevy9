@@ -436,7 +436,12 @@ export function ViewportPanel({
       return;
     }
     // Let global PIE transport shortcuts bubble cleanly without forwarding them as game keys.
-    if (event.code === "F5" || event.code === "F6" || event.code === "F10") {
+    if (
+      event.code === "F5" ||
+      event.code === "F6" ||
+      event.code === "F10" ||
+      (pieActive && (event.code === "Escape" || event.key === "Escape"))
+    ) {
       return;
     }
     if (
@@ -457,7 +462,12 @@ export function ViewportPanel({
   }
 
   function handleKeyUp(event: ReactKeyboardEvent<HTMLCanvasElement>) {
-    if (event.code === "F5" || event.code === "F6" || event.code === "F10") {
+    if (
+      event.code === "F5" ||
+      event.code === "F6" ||
+      event.code === "F10" ||
+      (pieActive && (event.code === "Escape" || event.key === "Escape"))
+    ) {
       return;
     }
     onViewportInput({
@@ -685,9 +695,9 @@ export function ViewportPanel({
           </div>
           <span
             className="pie-status-note truncate"
-            title="Live scene changes during Play-In-Editor are temporary and automatically revert when you press Stop."
+            title="Live scene changes during Play-In-Editor are temporary and automatically revert when you press Stop (Esc or Shift+F5)."
           >
-            Temporary PIE session — edits revert on Stop
+            Temporary PIE session — Esc / Shift+F5 to Stop
           </span>
         </div>
       )}
@@ -773,9 +783,9 @@ export function ViewportPanel({
 
             <div className="viewport-overlay-legend">
               {isPlaying
-                ? "PIE Playing: Click viewport for game input · F6 Pause · F10 Step · Shift+F5 Stop"
+                ? "PIE Playing: Click viewport for game input · F6 Pause · F10 Step · Esc / Shift+F5 Stop"
                 : isPaused
-                  ? "PIE Paused: Inspect live entities · F5 Resume · F10 Step · Shift+F5 Stop"
+                  ? "PIE Paused: Inspect live entities · F5 Resume · F10 Step · Esc / Shift+F5 Stop"
                   : cameraMode === "3d"
                     ? "3D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB Orbit+WASD · MMB/Alt+LMB Pan · Wheel Zoom"
                     : "2D: LMB Select/Gizmo · W/E/R Gizmo · Ctrl Snap · RMB/MMB Pan · Wheel Zoom"}

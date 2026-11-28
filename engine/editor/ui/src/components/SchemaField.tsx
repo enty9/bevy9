@@ -1352,19 +1352,13 @@ function ScriptComponentField({
       : {};
   const enabled = typeof obj.enabled === "boolean" ? obj.enabled : true;
   const scriptUuid = readAssetUuidValue(obj.script) || null;
-  const scriptPath = typeof obj.script_path === "string" ? obj.script_path : "";
   const properties = { values: readScriptPropertiesMap(obj.properties) };
-  const resolvedAsset = scriptUuid
-    ? assets.find((a) => a.uuid === scriptUuid) ?? null
-    : null;
-  const isUnassigned = !scriptUuid && scriptPath.trim().length === 0;
+  const isUnassigned = !scriptUuid;
 
   function emit(patch: Record<string, unknown>, immediate = false) {
     onChange(
       {
-        ...obj,
         script: scriptUuid,
-        script_path: scriptPath,
         enabled,
         properties,
         ...patch,
@@ -1388,7 +1382,7 @@ function ScriptComponentField({
       </div>
 
       <AssetSlotField
-        label="Script Asset"
+        label="Script"
         isOptional
         value={scriptUuid}
         assets={assets}
@@ -1398,39 +1392,9 @@ function ScriptComponentField({
         }
       />
 
-      <div className="prop-row">
-        <span className="prop-label" title="Fallback relative path under assets/ when no asset UUID is set">
-          Script Path
-        </span>
-        <div className="script-path-control prop-control">
-          <input
-            type="text"
-            className="text-input"
-            placeholder={
-              resolvedAsset
-                ? `${resolvedAsset.relative_path} (from asset)`
-                : "scripts/player_3d.rhai"
-            }
-            value={scriptPath}
-            onChange={(e) => emit({ script_path: e.target.value })}
-          />
-          {scriptPath !== "" && (
-            <button
-              type="button"
-              className="ghost-btn icon-mini"
-              title="Clear script path"
-              onClick={() => emit({ script_path: "" }, true)}
-            >
-              <X size={11} />
-            </button>
-          )}
-        </div>
-      </div>
-
       {isUnassigned && (
         <div className="muted script-hint">
-          Select or drop a <code>.rhai</code> script asset above, or enter a relative path (e.g.{" "}
-          <code>scripts/player_3d.rhai</code>).
+          Select or drop a <code>.rhai</code> script asset above.
         </div>
       )}
 
@@ -1738,12 +1702,12 @@ export function SchemaField({
             <option value={currentGuid}>
               {currentGuid === currentEntityGuid
                 ? "Self (Invalid target)"
-                : `Missing (${currentGuid.slice(0, 8)}…)`}
+                : "Missing entity"}
             </option>
           )}
           {candidateEntities.map((ent) => (
             <option key={ent.guid} value={ent.guid}>
-              {ent.name} ({ent.guid.slice(0, 8)})
+              {ent.name}
             </option>
           ))}
         </select>

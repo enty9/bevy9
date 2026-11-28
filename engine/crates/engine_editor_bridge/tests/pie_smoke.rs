@@ -23,7 +23,11 @@ use bevy_ecs::{
     query::With,
 };
 use bevy_image::Image;
-use bevy_input::mouse::{MouseMotion, MouseWheel};
+use bevy_input::{
+    keyboard::KeyCode,
+    mouse::{MouseMotion, MouseWheel},
+    ButtonInput,
+};
 use bevy_math::{Quat, Vec3};
 use bevy_mesh::Mesh;
 use bevy_pbr::StandardMaterial;
@@ -53,10 +57,11 @@ use engine_protocol::{
     HistoryStepResult, InputModifiers, PieState, PieStatePayload, PieStepParams,
     PointerButtonCode, PrefabSaveParams, SceneLoadParams, SceneNewParams, SceneSaveParams,
     ServerIpcMessage, SetComponentParams, SpawnPresetParams, SpawnPresetResult,
-    ViewportCameraMode, ViewportInputEvent, METHOD_COMPONENT_SET, METHOD_ENTITY_DELETE,
-    METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO, METHOD_HISTORY_STATE, METHOD_HISTORY_UNDO,
-    METHOD_PIE_PAUSE, METHOD_PIE_PLAY, METHOD_PIE_STATE, METHOD_PIE_STEP, METHOD_PIE_STOP,
-    METHOD_PREFAB_SAVE, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE, PROTOCOL_VERSION,
+    ViewportCameraMode, ViewportInputEvent, ViewportMode, METHOD_COMPONENT_SET,
+    METHOD_ENTITY_DELETE, METHOD_ENTITY_SPAWN_PRESET, METHOD_HISTORY_REDO, METHOD_HISTORY_STATE,
+    METHOD_HISTORY_UNDO, METHOD_PIE_PAUSE, METHOD_PIE_PLAY, METHOD_PIE_STATE, METHOD_PIE_STEP,
+    METHOD_PIE_STOP, METHOD_PREFAB_SAVE, METHOD_SCENE_LOAD, METHOD_SCENE_NEW, METHOD_SCENE_SAVE,
+    PROTOCOL_VERSION,
 };
 use engine_render::{
     camera::{EditorCamera2d, EditorCamera3d, EditorCameraState},
@@ -1331,8 +1336,7 @@ fn pie_scripting_play_pause_step_stop_and_zero_leaks() {
         .with("starts", 0_i64)
         .with("updates", 0_i64)
         .with("fixed_ticks", 0_i64);
-    let mut initial_script = ScriptComponent::from_uuid(script_uuid).with_properties(initial_props);
-    initial_script.script_path = "scripts/mover.rhai".to_owned();
+    let initial_script = ScriptComponent::from_uuid(script_uuid).with_properties(initial_props);
 
     let (actor_ent, actor_guid) = spawn_preset(
         app.world_mut(),
@@ -1618,4 +1622,34 @@ fn pie_scripting_play_pause_step_stop_and_zero_leaks() {
     );
     assert!(audio_state.lock().unwrap().active_voices.is_empty());
     assert!(app.world().resource::<ActiveScriptVoices>().is_empty());
+}
+
+#[test]
+fn pie_native_window_escape_stops_active_session() {
+    let mut app = setup_full_pie_app(None, false, None, None);
+    app.init_resource::<ButtonInput<KeyCode>>();
+
+    assert_eq!(
+        PieController::play(app.world_mut()).unwrap().state,
+        PieState::Playing
+    );
+
+    // Offscreen mode leaves Escape handling to the editor UI shell.
+    app.world_mut().resource_mut::<ViewportConfig>().mode = ViewportMode::Offscreen;
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Escape);
+    app.update();
+    assert_eq!(PieController::state(app.world()).state, PieState::Playing);
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .reset_all();
+
+    // Detached NativeWindow mode stops PIE immediately when Escape is pressed.
+    app.world_mut().resource_mut::<ViewportConfig>().mode = ViewportMode::NativeWindow;
+    app.world_mut()
+        .resource_mut::<ButtonInput<KeyCode>>()
+        .press(KeyCode::Escape);
+    app.update();
+    assert_eq!(PieController::state(app.world()).state, PieState::Editing);
 }

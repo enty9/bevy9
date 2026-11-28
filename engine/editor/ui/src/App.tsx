@@ -1240,6 +1240,25 @@ export function App() {
   useEffect(() => {
     function onWindowKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || models.active) return;
+
+      // Escape exits Play-In-Editor immediately from anywhere in the viewport or editor.
+      if (
+        pieState.state !== "editing" &&
+        (event.key === "Escape" || event.code === "Escape") &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.altKey &&
+        !busy &&
+        brpClient &&
+        (hostStatus.state === "running" || ipcState === "connected")
+      ) {
+        event.preventDefault();
+        if (!event.repeat) {
+          void handlePieStop();
+        }
+        return;
+      }
+
       const target = event.target as HTMLElement | null;
       const tag = target?.tagName;
       const isTextInput =

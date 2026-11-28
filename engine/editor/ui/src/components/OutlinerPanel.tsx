@@ -52,9 +52,6 @@ const PRESET_GROUPS: PresetGroup[] = [
   {
     label: "3D",
     items: [
-      { kind: "cube3d", label: "Cube 3D" },
-      { kind: "sphere3d", label: "Sphere 3D" },
-      { kind: "plane3d", label: "Plane 3D" },
       { kind: "directional_light", label: "Directional Light" },
       { kind: "point_light", label: "Point Light" },
       { kind: "camera3d", label: "Camera 3D" },
@@ -341,8 +338,8 @@ export function OutlinerPanel({
               className="outliner-name"
               title={
                 node.prefab_path
-                  ? `${node.guid} · Prefab: ${node.prefab_path}`
-                  : node.guid
+                  ? `${node.name} · Prefab: ${node.prefab_path}`
+                  : node.name
               }
             >
               {node.prefab_path && (

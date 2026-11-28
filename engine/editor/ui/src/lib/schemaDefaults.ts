@@ -4,6 +4,13 @@ import type {
   BrpSchemaType,
 } from "../protocol/types";
 
+const HIDDEN_EDITOR_EXACT = new Set<string>([
+  "engine_core::guid::EntityGuid",
+  "engine_scene::components::MeshPrimitive3d",
+  "bevy_pbr::mesh_material::MeshMaterial3d",
+  "bevy_pbr::material::MeshMaterial3d",
+]);
+
 const PROTECTED_COMPONENTS = new Set<string>([
   "engine_core::guid::EntityGuid",
   "engine_scene::components::SceneEntity",
@@ -64,9 +71,6 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     translation: [0, 0, 0],
     rotation: [0, 0, 0, 1],
     scale: [1, 1, 1],
-  },
-  "engine_scene::components::MeshPrimitive3d": {
-    Cube: { size: [1, 1, 1] },
   },
   "engine_scene::components::StandardMaterialDesc": {
     base_color: {
@@ -197,7 +201,6 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
   },
   "engine_scripting::component::ScriptComponent": {
     script: null,
-    script_path: "",
     enabled: true,
     properties: {
       values: {},
@@ -336,6 +339,16 @@ export function resolveSchemaRef(
   };
 }
 
+export function isHiddenEditorComponent(typePath: string): boolean {
+  if (HIDDEN_EDITOR_EXACT.has(typePath)) {
+    return true;
+  }
+  return (
+    typePath.startsWith("bevy_pbr::mesh_material::MeshMaterial3d<") ||
+    typePath.startsWith("bevy_pbr::material::MeshMaterial3d<")
+  );
+}
+
 export function isProtectedComponent(typePath: string): boolean {
   return PROTECTED_COMPONENTS.has(typePath);
 }
@@ -345,6 +358,7 @@ export function isComputedRuntimeComponent(typePath: string): boolean {
     return true;
   }
   return (
+    typePath.startsWith("bevy_pbr::mesh_material::MeshMaterial3d<") ||
     typePath.startsWith("bevy_pbr::material::MeshMaterial3d<") ||
     typePath.startsWith("bevy_sprite_render::mesh2d::material::MeshMaterial2d<")
   );

@@ -387,7 +387,7 @@ export function Toolbar({
           type="button"
           className={`pie-btn pie-stop ${pieActive ? "armed" : ""}`}
           disabled={!hostRunning || busy || pieBusy || !pieActive}
-          title="Stop Play-In-Editor and restore scene (Shift+F5)"
+          title="Stop Play-In-Editor and restore scene (Esc / Shift+F5)"
           aria-label="Stop"
           onClick={onPieStop}
         >

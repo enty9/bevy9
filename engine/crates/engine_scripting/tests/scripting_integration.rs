@@ -173,7 +173,8 @@ fn sandbox_terminates_infinite_loop_and_emits_diagnostic() {
         ..Default::default()
     });
 
-    app.world_mut()
+    let bad_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "infinite_loop.rhai",
@@ -188,7 +189,8 @@ fn sandbox_terminates_infinite_loop_and_emits_diagnostic() {
         )
         .expect("script should compile");
 
-    app.world_mut()
+    let healthy_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "healthy_peer.rhai",
@@ -207,7 +209,7 @@ fn sandbox_terminates_infinite_loop_and_emits_diagnostic() {
             Name::new("BadLoopEntity"),
             bad_guid,
             Transform::default(),
-            ScriptComponent::from_path("infinite_loop.rhai"),
+            ScriptComponent::from_uuid(bad_uuid),
         ))
         .id();
 
@@ -216,7 +218,7 @@ fn sandbox_terminates_infinite_loop_and_emits_diagnostic() {
         .spawn((
             Name::new("HealthyEntity"),
             Transform::default(),
-            ScriptComponent::from_path("healthy_peer.rhai"),
+            ScriptComponent::from_uuid(healthy_uuid),
         ))
         .id();
 
@@ -265,28 +267,36 @@ fn sandbox_enforces_while_true_and_allocation_and_recursion_limits() {
         ..Default::default()
     });
 
-    {
+    let scripts = {
         let mut rt = app.world_mut().resource_mut::<ScriptRuntime>();
-        rt.register_inline_script(
-            "while_true.rhai",
-            "fn on_update(dt) { while true {} }",
-        )
-        .unwrap();
-        rt.register_inline_script(
-            "huge_array.rhai",
-            "fn on_update(dt) { let a = []; for i in 0..100 { a.push(i); } }",
-        )
-        .unwrap();
-        rt.register_inline_script(
-            "deep_recurse.rhai",
-            "fn boom(n) { boom(n + 1) }\nfn on_update(dt) { boom(0); }",
-        )
-        .unwrap();
-    }
+        let s1 = rt
+            .register_inline_script(
+                "while_true.rhai",
+                "fn on_update(dt) { while true {} }",
+            )
+            .unwrap();
+        let s2 = rt
+            .register_inline_script(
+                "huge_array.rhai",
+                "fn on_update(dt) { let a = []; for i in 0..100 { a.push(i); } }",
+            )
+            .unwrap();
+        let s3 = rt
+            .register_inline_script(
+                "deep_recurse.rhai",
+                "fn boom(n) { boom(n + 1) }\nfn on_update(dt) { boom(0); }",
+            )
+            .unwrap();
+        [
+            ("while_true.rhai", s1),
+            ("huge_array.rhai", s2),
+            ("deep_recurse.rhai", s3),
+        ]
+    };
 
-    for name in ["while_true.rhai", "huge_array.rhai", "deep_recurse.rhai"] {
+    for (name, uuid) in scripts {
         app.world_mut()
-            .spawn((Name::new(name), ScriptComponent::from_path(name)));
+            .spawn((Name::new(name), ScriptComponent::from_uuid(uuid)));
     }
 
     step_update(&mut app, 0.016);
@@ -315,18 +325,16 @@ fn script_component_and_properties_reflection_serde_and_scene_roundtrip() {
                 .with("move_dir", Vec2::new(0.5, -0.25))
                 .with("spawn_offset", Vec3::new(1.0, 2.5, -4.0)),
         );
-    let mut original_with_path = original;
-    original_with_path.script_path = "scripts/player.rhai".to_owned();
 
     // 1. JSON serde round-trip
-    let json_text = serde_json::to_string(&original_with_path).expect("json serialize");
+    let json_text = serde_json::to_string(&original).expect("json serialize");
     let json_back: ScriptComponent = serde_json::from_str(&json_text).expect("json deserialize");
-    assert_eq!(json_back, original_with_path);
+    assert_eq!(json_back, original);
 
     // 2. RON serde round-trip
-    let ron_text = ron::to_string(&original_with_path).expect("ron serialize");
+    let ron_text = ron::to_string(&original).expect("ron serialize");
     let ron_back: ScriptComponent = ron::from_str(&ron_text).expect("ron deserialize");
-    assert_eq!(ron_back, original_with_path);
+    assert_eq!(ron_back, original);
 
     // 3. Bevy AppTypeRegistry ReflectSerializer / TypedReflectDeserializer round-trip
     {
@@ -336,7 +344,7 @@ fn script_component_and_properties_reflection_serde_and_scene_roundtrip() {
             .expect("ScriptComponent must be registered in AppTypeRegistry");
         assert!(registration.data::<ReflectComponent>().is_some());
 
-        let serializer = ReflectSerializer::new(&original_with_path, &registry);
+        let serializer = ReflectSerializer::new(&original, &registry);
         let value = serde_json::to_value(&serializer).expect("reflect serialize");
         let inner = value
             .as_object()
@@ -350,7 +358,7 @@ fn script_component_and_properties_reflection_serde_and_scene_roundtrip() {
             reflected.as_partial_reflect(),
         )
         .expect("FromReflect ScriptComponent");
-        assert_eq!(concrete, original_with_path);
+        assert_eq!(concrete, original);
     }
 
     // 4. Full .level.ron scene save & load round-trip via engine_scene
@@ -360,7 +368,7 @@ fn script_component_and_properties_reflection_serde_and_scene_roundtrip() {
         entity_guid,
         Name::new("ScriptedHero"),
         Transform::from_xyz(2.0, 3.0, 4.0),
-        original_with_path.clone(),
+        original.clone(),
     ));
 
     let metadata = LevelMetadata {
@@ -381,7 +389,7 @@ fn script_component_and_properties_reflection_serde_and_scene_roundtrip() {
     }
     assert_eq!(
         found,
-        Some(original_with_path),
+        Some(original),
         "ScriptComponent + ScriptProperties must survive .level.ron round-trip"
     );
 }
@@ -396,7 +404,8 @@ fn lifecycle_hooks_scope_isolation_and_pie_reset() {
     let mut app = build_test_app();
     app.insert_resource(ScriptExecutionOptions::editor()); // Starts disabled!
 
-    app.world_mut()
+    let counter_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "counter.rhai",
@@ -430,7 +439,7 @@ fn lifecycle_hooks_scope_isolation_and_pie_reset() {
         .spawn((
             Name::new("RunnerA"),
             Transform::default(),
-            ScriptComponent::from_path("counter.rhai")
+            ScriptComponent::from_uuid(counter_uuid)
                 .with_property("tag", "A")
                 .with_property("speed", 10.0_f64)
                 .with_property("starts", 0_i64)
@@ -444,7 +453,7 @@ fn lifecycle_hooks_scope_isolation_and_pie_reset() {
         .spawn((
             Name::new("RunnerB"),
             Transform::default(),
-            ScriptComponent::from_path("counter.rhai")
+            ScriptComponent::from_uuid(counter_uuid)
                 .with_property("tag", "B")
                 .with_property("speed", -5.0_f64)
                 .with_property("starts", 0_i64)
@@ -550,7 +559,8 @@ fn lifecycle_hooks_scope_isolation_and_pie_reset() {
 fn physics_collision_and_trigger_enter_exit_hooks_fire_from_rapier_observers() {
     let mut app = build_test_app();
 
-    app.world_mut()
+    let ball_hooks_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "ball_hooks.rhai",
@@ -593,7 +603,7 @@ fn physics_collision_and_trigger_enter_exit_hooks_fire_from_rapier_observers() {
             ccd: true,
             ..Default::default()
         },
-        ScriptComponent::from_path("ball_hooks.rhai"),
+        ScriptComponent::from_uuid(ball_hooks_uuid),
     ));
 
     step_fixed(&mut app, 90);
@@ -627,7 +637,8 @@ fn physics_collision_and_trigger_enter_exit_hooks_fire_from_rapier_observers() {
 fn reflect_bridge_reads_and_mutates_transform_and_custom_reflected_components() {
     let mut app = build_test_app();
 
-    app.world_mut()
+    let reflect_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "reflect_test.rhai",
@@ -671,7 +682,7 @@ fn reflect_bridge_reads_and_mutates_transform_and_custom_reflected_components() 
             Name::new("Hero"),
             Transform::from_xyz(1.0, 0.0, 0.0),
             PlayerStats::default(),
-            ScriptComponent::from_path("reflect_test.rhai"),
+            ScriptComponent::from_uuid(reflect_uuid),
         ))
         .id();
 
@@ -707,7 +718,8 @@ fn reflect_bridge_reads_and_mutates_transform_and_custom_reflected_components() 
 fn reflect_bridge_rejects_immutable_component_and_bad_field_without_panicking() {
     let mut app = build_test_app();
 
-    app.world_mut()
+    let bad_reflect_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "bad_reflect.rhai",
@@ -725,7 +737,7 @@ fn reflect_bridge_rejects_immutable_component_and_bad_field_without_panicking() 
         .spawn((
             Name::new("Child"),
             ChildOf(parent),
-            ScriptComponent::from_path("bad_reflect.rhai"),
+            ScriptComponent::from_uuid(bad_reflect_uuid),
         ))
         .id();
 
@@ -820,7 +832,8 @@ fn input_api_reads_enhanced_input_actions_and_axes() {
             ..Default::default()
         });
 
-    app.world_mut()
+    let input_reader_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "input_reader.rhai",
@@ -842,7 +855,7 @@ fn input_api_reads_enhanced_input_actions_and_axes() {
         .unwrap();
 
     app.world_mut()
-        .spawn((Name::new("InputProbe"), ScriptComponent::from_path("input_reader.rhai")));
+        .spawn((Name::new("InputProbe"), ScriptComponent::from_uuid(input_reader_uuid)));
 
     // Frame 1: Press Space, D, W, E
     {
@@ -886,11 +899,12 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
         xyz: Vec3::ZERO,
     });
 
-    {
+    let (phys_3d_uuid, char_3d_uuid, phys_2d_uuid, char_2d_uuid) = {
         let mut rt = app.world_mut().resource_mut::<ScriptRuntime>();
-        rt.register_inline_script(
-            "physics_3d.rhai",
-            r#"
+        let p3 = rt
+            .register_inline_script(
+                "physics_3d.rhai",
+                r#"
             let pulsed = false;
             fn on_fixed_update(dt) {
                 let hit = physics.raycast_3d(0.0, 5.0, 0.0, 0.0, -1.0, 0.0, 20.0);
@@ -904,22 +918,24 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
                 }
             }
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        rt.register_inline_script(
-            "char_3d.rhai",
-            r#"
+        let c3 = rt
+            .register_inline_script(
+                "char_3d.rhai",
+                r#"
             fn on_fixed_update(dt) {
                 physics.move_character_3d(6.0, 0.0, 0.0);
             }
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        rt.register_inline_script(
-            "physics_2d.rhai",
-            r#"
+        let p2 = rt
+            .register_inline_script(
+                "physics_2d.rhai",
+                r#"
             let pulsed = false;
             fn on_fixed_update(dt) {
                 let hit = physics.raycast_2d(0.0, 100.0, 0.0, -1.0, 200.0);
@@ -932,19 +948,21 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
                 }
             }
             "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        rt.register_inline_script(
-            "char_2d.rhai",
-            r#"
+        let c2 = rt
+            .register_inline_script(
+                "char_2d.rhai",
+                r#"
             fn on_fixed_update(dt) {
                 physics.move_character_2d(60.0, 0.0);
             }
             "#,
-        )
-        .unwrap();
-    }
+            )
+            .unwrap();
+        (p3, c3, p2, c2)
+    };
 
     // 3D static floor + dynamic body + character controller
     app.world_mut().spawn((
@@ -959,7 +977,7 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
             Transform::from_xyz(0.0, 5.0, 0.0),
             Collider3D::Ball(0.5),
             RigidBody3D::default(),
-            ScriptComponent::from_path("physics_3d.rhai")
+            ScriptComponent::from_uuid(phys_3d_uuid)
                 .with_property("ray3d_hit", "")
                 .with_property("ray3d_dist", 0.0_f64),
         ))
@@ -975,7 +993,7 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
                 ..Default::default()
             },
             CharacterController3D::default(),
-            ScriptComponent::from_path("char_3d.rhai"),
+            ScriptComponent::from_uuid(char_3d_uuid),
         ))
         .id();
 
@@ -992,7 +1010,7 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
             Transform::from_xyz(0.0, 100.0, 0.0),
             Collider2D::Ball(10.0),
             RigidBody2D::default(),
-            ScriptComponent::from_path("physics_2d.rhai").with_property("ray2d_hit", ""),
+            ScriptComponent::from_uuid(phys_2d_uuid).with_property("ray2d_hit", ""),
         ))
         .id();
     let char2d = app
@@ -1009,7 +1027,7 @@ fn physics_api_raycast_impulse_and_character_controller_3d_and_2d() {
                 platformer: false,
                 ..Default::default()
             },
-            ScriptComponent::from_path("char_2d.rhai"),
+            ScriptComponent::from_uuid(char_2d_uuid),
         ))
         .id();
 
@@ -1133,7 +1151,8 @@ fn audio_world_and_events_apis_work_end_to_end() {
         .spawn((Name::new("DoomedTarget"), Transform::default()))
         .id();
 
-    app.world_mut()
+    let director_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script(
             "director.rhai",
@@ -1168,7 +1187,7 @@ fn audio_world_and_events_apis_work_end_to_end() {
                 pitch: 1.2,
                 ..Default::default()
             },
-            ScriptComponent::from_path("director.rhai"),
+            ScriptComponent::from_uuid(director_uuid),
         ))
         .id();
 
@@ -1316,9 +1335,9 @@ fn deferred_reset_clears_impulses_contacts_and_voices_and_paused_never_flushes_i
 #[test]
 fn hot_reload_recompiles_preserves_properties_and_recovers_from_syntax_errors() {
     let dir = TempTestDir::new("hot-reload");
-    let scripts_dir = dir.path.join("scripts");
-    fs::create_dir_all(&scripts_dir).unwrap();
-    let script_file = scripts_dir.join("mover.rhai");
+    let assets_dir = dir.path.join("assets");
+    fs::create_dir_all(&assets_dir).unwrap();
+    let script_file = assets_dir.join("mover.rhai");
 
     // Version 1: move along +X using props.speed
     fs::write(
@@ -1334,9 +1353,17 @@ fn hot_reload_recompiles_preserves_properties_and_recovers_from_syntax_errors() 
     )
     .unwrap();
 
+    let mut registry = AssetRegistry::new(assets_dir, None);
+    registry.scan_all().unwrap();
+    let mover_uuid = registry
+        .get_by_path("mover.rhai")
+        .expect("mover.rhai indexed")
+        .uuid;
+
     let mut app = build_test_app();
     let manifest = ProjectManifest::new("HotReloadTest", WorldMode::Mode3D);
     app.insert_resource(manifest.resolve_paths(&dir.path));
+    app.insert_resource(registry);
 
     let entity_guid = EntityGuid::new();
     let entity = app
@@ -1345,7 +1372,7 @@ fn hot_reload_recompiles_preserves_properties_and_recovers_from_syntax_errors() 
             Name::new("HotReloadMover"),
             entity_guid,
             Transform::default(),
-            ScriptComponent::from_path("mover.rhai")
+            ScriptComponent::from_uuid(mover_uuid)
                 .with_property("speed", 4.0_f64)
                 .with_property("label", "preserved")
                 .with_property("start_count", 0_i64),
@@ -1620,13 +1647,14 @@ fn pluggable_custom_script_backend_runs_through_script_runtime() {
         ScriptCallContext::new(),
     ));
     app.add_plugins((TimePlugin, EngineCorePlugin, EngineScriptingPlugin));
-    app.world_mut()
+    let mock_uuid = app
+        .world_mut()
         .resource_mut::<ScriptRuntime>()
         .register_inline_script("mock.script", "// noop")
         .unwrap();
 
     app.world_mut()
-        .spawn(ScriptComponent::from_path("mock.script"));
+        .spawn(ScriptComponent::from_uuid(mock_uuid));
 
     step_update(&mut app, 0.016);
     step_update(&mut app, 0.016);

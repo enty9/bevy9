@@ -15,6 +15,7 @@ import {
   buildDefaultValueForType,
   getComponentBadgeCategory,
   isComputedRuntimeComponent,
+  isHiddenEditorComponent,
   isProtectedComponent,
   shortComponentName,
   sortComponentPaths,
@@ -91,6 +92,9 @@ export function InspectorPanel({
   const [addSearch, setAddSearch] = useState("");
 
   const fetchTokenRef = useRef(0);
+  const inspectorBodyRef = useRef<HTMLDivElement | null>(null);
+  const addMenuAnchorRef = useRef<HTMLDivElement | null>(null);
+  const addMenuListRef = useRef<HTMLDivElement | null>(null);
   const pendingTimersRef = useRef<
     Map<
       string,
@@ -128,20 +132,98 @@ export function InspectorPanel({
   }, [brpClient]);
 
   useEffect(() => {
+    setAddMenuOpen(false);
+    setAddSearch("");
     return () => {
       void flushPendingWrites();
     };
   }, [flushPendingWrites, selectedNode?.guid]);
 
+  useEffect(() => {
+    if (!addMenuOpen) {
+      return;
+    }
+
+    const closeMenu = () => {
+      setAddMenuOpen(false);
+      setAddSearch("");
+    };
+
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      if (
+        addMenuAnchorRef.current &&
+        event.target instanceof Node &&
+        !addMenuAnchorRef.current.contains(event.target)
+      ) {
+        closeMenu();
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+
+    const handleInspectorScroll = () => {
+      closeMenu();
+    };
+
+    const handleWindowWheel = (event: WheelEvent) => {
+      if (
+        event.target instanceof Node &&
+        addMenuListRef.current?.contains(event.target)
+      ) {
+        return;
+      }
+      closeMenu();
+    };
+
+    const handleAnyScroll = (event: Event) => {
+      if (
+        event.target === addMenuListRef.current ||
+        (event.target instanceof Node &&
+          addMenuListRef.current?.contains(event.target))
+      ) {
+        return;
+      }
+      closeMenu();
+    };
+
+    const inspectorBody = inspectorBodyRef.current;
+    window.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("wheel", handleWindowWheel, {
+      capture: true,
+      passive: true,
+    });
+    window.addEventListener("scroll", handleAnyScroll, {
+      capture: true,
+      passive: true,
+    });
+    inspectorBody?.addEventListener("scroll", handleInspectorScroll, {
+      passive: true,
+    });
+
+    return () => {
+      window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("wheel", handleWindowWheel, true);
+      window.removeEventListener("scroll", handleAnyScroll, true);
+      inspectorBody?.removeEventListener("scroll", handleInspectorScroll);
+    };
+  }, [addMenuOpen]);
+
   const visibleComponentPaths = useMemo(() => {
     if (!selectedNode) {
       return [];
     }
+    const base = selectedNode.components.filter(
+      (typePath) => !isHiddenEditorComponent(typePath),
+    );
     const filtered = showRuntime
-      ? selectedNode.components
-      : selectedNode.components.filter(
-          (typePath) => !isComputedRuntimeComponent(typePath),
-        );
+      ? base
+      : base.filter((typePath) => !isComputedRuntimeComponent(typePath));
     return sortComponentPaths(filtered);
   }, [selectedNode, showRuntime]);
 
@@ -267,7 +349,7 @@ export function InspectorPanel({
 
     const items = Object.entries(registrySchema)
       .filter(([typePath, def]) => {
-        if (existing.has(typePath)) {
+        if (existing.has(typePath) || isHiddenEditorComponent(typePath)) {
           return false;
         }
         const isComponent =
@@ -489,7 +571,7 @@ export function InspectorPanel({
           </div>
         </div>
       ) : (
-        <div className="panel-body inspector-body">
+        <div ref={inspectorBodyRef} className="panel-body inspector-body">
           <div className="inspector-entity-card">
             <div className="inspector-entity-top">
               <strong className="inspector-entity-name">{selectedNode.name}</strong>
@@ -519,10 +601,9 @@ export function InspectorPanel({
                 </button>
               </div>
             </div>
-            <div className="muted inspector-meta">
-              GUID: {selectedNode.guid} · ECS: {selectedNode.entity_bits}
-              {selectedCount > 1 ? ` · (${selectedCount} selected)` : ""}
-            </div>
+            {selectedCount > 1 && (
+              <div className="muted inspector-meta">{selectedCount} selected</div>
+            )}
           </div>
 
           {prefabRootNode && (
@@ -572,7 +653,11 @@ export function InspectorPanel({
           {errorBanner && <div className="badge crashed">{errorBanner}</div>}
 
           <div className="inspector-actions-bar">
-            <div className="popover-anchor" style={{ width: "100%" }}>
+            <div
+              ref={addMenuAnchorRef}
+              className="popover-anchor"
+              style={{ width: "100%" }}
+            >
               <button
                 type="button"
                 className="primary"
@@ -594,7 +679,7 @@ export function InspectorPanel({
                     placeholder="Search component type..."
                     autoFocus
                   />
-                  <div className="add-component-list">
+                  <div ref={addMenuListRef} className="add-component-list">
                     {addableComponents.length === 0 ? (
                       <div className="muted">No matching components</div>
                     ) : (

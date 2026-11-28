@@ -128,6 +128,7 @@ impl Plugin for EditorBridgePlugin {
                     .before(engine_render::EditorCameraSystems)
                     .in_set(EngineSet::EditorSync),
                 (
+                    pie::handle_native_pie_shortcuts_system,
                     pie::track_pie_update_frame,
                     pie::sync_pie_cameras_and_viewport,
                     history::capture_gizmo_commits_system.run_if(pie::is_editing),

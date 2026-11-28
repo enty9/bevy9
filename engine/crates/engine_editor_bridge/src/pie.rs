@@ -13,6 +13,7 @@ use bevy_ecs::{
     system::{In, Res, ResMut},
     world::World,
 };
+use bevy_input::{keyboard::KeyCode, ButtonInput};
 use bevy_remote::{builtin_methods::parse, error_codes, BrpError, BrpResult, RemotePlugin};
 use bevy_time::{Fixed, Time};
 use bevy_transform::components::Transform;
@@ -946,6 +947,27 @@ pub(crate) fn track_pie_fixed_step(
 pub(crate) fn track_pie_update_frame(mut pie: ResMut<PieSessionState>) {
     if pie.is_playing() {
         pie.frame_count += 1;
+    }
+}
+
+pub(crate) fn handle_native_pie_shortcuts_system(world: &mut World) {
+    if !is_pie_active(world) {
+        return;
+    }
+    let is_native_window = world
+        .get_resource::<ViewportConfig>()
+        .is_some_and(|cfg| cfg.mode == ViewportMode::NativeWindow);
+    if !is_native_window {
+        return;
+    }
+    let escape_pressed = world
+        .get_resource::<ButtonInput<KeyCode>>()
+        .is_some_and(|keys| keys.just_pressed(KeyCode::Escape));
+    if !escape_pressed {
+        return;
+    }
+    if let Err(err) = PieController::stop(world) {
+        tracing::warn!(error = %err, "native Escape PIE stop failed");
     }
 }
 

@@ -870,7 +870,7 @@ export function ContentBrowserPanel({
                   <button
                     type="button"
                     className="ghost-btn"
-                    title="Copy relative script path for ScriptComponent.script_path"
+                    title="Copy relative script path"
                     onClick={() => {
                       if (navigator.clipboard?.writeText) {
                         void navigator.clipboard
@@ -894,8 +894,8 @@ export function ContentBrowserPanel({
                   </button>
                 </div>
                 <div className="muted">
-                  Drag onto a <code>ScriptComponent</code> asset slot in the Inspector, or reference{" "}
-                  <code className="cb-mono">{selectedAsset.relative_path}</code>.
+                  Drag onto a <code>ScriptComponent</code> slot in the Inspector, or select{" "}
+                  <code className="cb-mono">{selectedAsset.relative_path}</code> from the Script picker.
                 </div>
               </div>
             )}

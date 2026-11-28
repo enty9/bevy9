@@ -140,7 +140,6 @@
                     ),
                     "engine_scripting::component::ScriptComponent": (
                         script: Some(("11111111-2222-4333-8444-555555555311")),
-                        script_path: "scripts/player_3d.rhai",
                         enabled: true,
                         properties: (
                             values: {
@@ -222,7 +221,6 @@
                     "engine_scene::components::SceneEntity": (),
                     "engine_scripting::component::ScriptComponent": (
                         script: Some(("11111111-2222-4333-8444-555555555313")),
-                        script_path: "scripts/camera_follow_3d.rhai",
                         enabled: true,
                         properties: (
                             values: {
@@ -249,7 +247,6 @@
                     "engine_scene::components::SceneEntity": (),
                     "engine_scripting::component::ScriptComponent": (
                         script: Some(("11111111-2222-4333-8444-555555555312")),
-                        script_path: "scripts/collectible_trigger_3d.rhai",
                         enabled: true,
                         properties: (
                             values: {

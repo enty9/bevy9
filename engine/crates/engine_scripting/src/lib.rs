@@ -194,15 +194,29 @@ impl ScriptRuntime {
         self.backend.set_sandbox_config(config);
     }
 
-    /// Compiles and caches an in-memory script accessible via `ScriptComponent::from_path(name)`.
+    /// Compiles and caches an in-memory script under a newly generated [`AssetUuid`],
+    /// accessible via `ScriptComponent::from_uuid(uuid)`.
     pub fn register_inline_script(
         &mut self,
         name: impl Into<String>,
         source_code: &str,
+    ) -> Result<AssetUuid, ScriptError> {
+        let uuid = AssetUuid::new();
+        self.register_inline_script_with_uuid(uuid, name, source_code)?;
+        Ok(uuid)
+    }
+
+    /// Compiles and caches an in-memory script under an explicit [`AssetUuid`],
+    /// accessible via `ScriptComponent::from_uuid(uuid)`.
+    pub fn register_inline_script_with_uuid(
+        &mut self,
+        uuid: AssetUuid,
+        source_label: impl Into<String>,
+        source_code: &str,
     ) -> Result<ScriptCompiledInfo, ScriptError> {
-        let name = name.into();
-        let key = ScriptSourceKey::Inline(name.clone());
-        self.backend.compile_source(&key, &name, source_code, None)
+        let label = source_label.into();
+        let key = ScriptSourceKey::Asset(uuid);
+        self.backend.compile_source(&key, &label, source_code, None)
     }
 
     /// Compiles and caches `source_code` under an explicit [`ScriptSourceKey`].

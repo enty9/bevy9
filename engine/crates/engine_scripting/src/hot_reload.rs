@@ -10,7 +10,7 @@ use std::{
 use bevy_ecs::{entity::Entity, event::Event, name::Name, resource::Resource, world::World};
 use crossbeam_channel::{unbounded, Receiver};
 use engine_assets::AssetRegistry;
-use engine_core::{EntityGuid, ProjectPaths};
+use engine_core::EntityGuid;
 use notify::{Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::{
@@ -237,131 +237,44 @@ pub struct ResolvedScript {
     pub source_label: String,
 }
 
-/// Resolves a [`ScriptComponent`] reference into a [`ResolvedScript`].
+/// Resolves a [`ScriptComponent`] asset UUID reference into a [`ResolvedScript`].
 #[must_use]
 pub fn resolve_script_source(
     world: &World,
     backend: &dyn ScriptBackend,
     comp: &ScriptComponent,
 ) -> Option<ResolvedScript> {
-    if comp.is_unassigned() {
-        return None;
-    }
+    let uuid = comp.script?;
+    let key = ScriptSourceKey::Asset(uuid);
 
-    // 1. Prefer persistent AssetUuid when set.
-    if let Some(uuid) = comp.script {
-        if let Some(registry) = world.get_resource::<AssetRegistry>()
-            && let Some(abs_path) = registry.resolve_abs_path(uuid)
-        {
-            let source_label = registry
-                .shared()
-                .resolve_path(uuid)
-                .unwrap_or_else(|| abs_path.to_string_lossy().replace('\\', "/"));
-            return Some(ResolvedScript {
-                key: ScriptSourceKey::Asset(uuid),
-                abs_path: Some(abs_path),
-                source_label,
-            });
-        }
-
-        // Check if registered in-memory under this UUID already.
-        let key = ScriptSourceKey::Asset(uuid);
-        if let Some(info) = backend.compiled_info(&key) {
-            return Some(ResolvedScript {
-                key,
-                abs_path: None,
-                source_label: info.source_label,
-            });
-        }
-
-        // Fallback to script_path if provided.
-        if comp.script_path.trim().is_empty() {
-            return Some(ResolvedScript {
-                key,
-                abs_path: None,
-                source_label: format!("uuid://{uuid}"),
-            });
-        }
-    }
-
-    let raw = comp.script_path.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let normalized = raw.replace('\\', "/");
-
-    // 2. Check inline script cache first (for tests and virtual scripts).
-    let inline_key = ScriptSourceKey::Inline(normalized.clone());
-    if let Some(info) = backend.compiled_info(&inline_key) {
+    if let Some(registry) = world.get_resource::<AssetRegistry>()
+        && let Some(abs_path) = registry.resolve_abs_path(uuid)
+    {
+        let source_label = registry
+            .shared()
+            .resolve_path(uuid)
+            .unwrap_or_else(|| abs_path.to_string_lossy().replace('\\', "/"));
         return Some(ResolvedScript {
-            key: inline_key,
-            abs_path: None,
-            source_label: info.source_label,
+            key,
+            abs_path: Some(abs_path),
+            source_label,
         });
     }
 
-    // 3. Check if already cached as a Path key without disk re-resolution.
-    let path_key = ScriptSourceKey::Path(normalized.clone());
-    let candidate = resolve_disk_script_path(world, raw);
-    if candidate.exists() {
-        let abs = fs::canonicalize(&candidate).unwrap_or(candidate);
+    // Check if registered in-memory under this UUID already.
+    if let Some(info) = backend.compiled_info(&key) {
         return Some(ResolvedScript {
-            key: path_key,
-            abs_path: Some(abs),
-            source_label: normalized,
-        });
-    }
-
-    if let Some(info) = backend.compiled_info(&path_key) {
-        return Some(ResolvedScript {
-            key: path_key,
+            key,
             abs_path: None,
             source_label: info.source_label,
         });
     }
 
     Some(ResolvedScript {
-        key: path_key,
-        abs_path: Some(candidate),
-        source_label: normalized,
+        key,
+        abs_path: None,
+        source_label: format!("uuid://{uuid}"),
     })
-}
-
-fn resolve_disk_script_path(world: &World, raw: &str) -> PathBuf {
-    let direct = PathBuf::from(raw);
-    if direct.is_absolute() {
-        return direct;
-    }
-
-    if let Some(paths) = world.get_resource::<ProjectPaths>() {
-        let under_scripts = paths.scripts_dir.join(raw);
-        if under_scripts.exists() {
-            return under_scripts;
-        }
-        let under_assets = paths.assets_dir.join(raw);
-        if under_assets.exists() {
-            return under_assets;
-        }
-        let under_root = paths.root_dir.join(raw);
-        if under_root.exists() {
-            return under_root;
-        }
-    }
-
-    if let Some(registry) = world.get_resource::<AssetRegistry>() {
-        if let Some(rec) = registry.get_by_path(raw)
-            && let Some(abs) = registry.resolve_abs_path(rec.uuid)
-        {
-            return abs;
-        }
-        let under_assets = registry.shared().assets_dir().join(raw);
-        if under_assets.exists() {
-            return under_assets;
-        }
-    }
-
-    direct
 }
 
 /// Ensures `resolved` is compiled in `backend` and registered with [`ScriptFileTracker`].

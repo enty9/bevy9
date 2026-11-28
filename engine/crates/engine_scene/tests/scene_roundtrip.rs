@@ -672,8 +672,6 @@ fn script_component_round_trips_in_level_ron() {
                 .with("dir2", Vec2::new(1.0, -0.5))
                 .with("offset3", Vec3::new(0.0, 2.0, 4.0)),
         );
-    let mut script = script;
-    script.script_path = "scripts/player_3d.rhai".to_owned();
 
     source_app.world_mut().spawn((
         SceneEntity,
