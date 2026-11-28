@@ -1,10 +1,11 @@
 use std::{
     collections::VecDeque,
+    fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    process::{Child, Command, ExitStatus, Stdio},
+    sync::{Arc, Condvar, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -15,6 +16,8 @@ use tauri::{AppHandle, Emitter};
 use crate::project::{discover_engine_root, load_project_summary};
 
 const MAX_LOG_ENTRIES: usize = 500;
+const MAX_RECENT_STDERR_LINES: usize = 24;
+const STDERR_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
 const PREFERRED_BRP_PORT: u16 = 15702;
 const PREFERRED_IPC_PORT: u16 = 15704;
 const READY_TIMEOUT: Duration = Duration::from_secs(25);
@@ -70,6 +73,8 @@ struct SupervisorInner {
     status: EngineHostStatus,
     child: Option<Child>,
     logs: VecDeque<EngineLogMessage>,
+    recent_stderr: VecDeque<String>,
+    verified_build: Option<(PathBuf, SystemTime)>,
 }
 
 impl Default for SupervisorInner {
@@ -79,6 +84,8 @@ impl Default for SupervisorInner {
             status: EngineHostStatus::default(),
             child: None,
             logs: VecDeque::with_capacity(MAX_LOG_ENTRIES),
+            recent_stderr: VecDeque::with_capacity(MAX_RECENT_STDERR_LINES),
+            verified_build: None,
         }
     }
 }
@@ -153,6 +160,7 @@ impl EngineSupervisor {
             guard.generation = guard.generation.wrapping_add(1);
             let my_gen = guard.generation;
             let previous_child = guard.child.take();
+            guard.recent_stderr.clear();
             guard.status = EngineHostStatus {
                 state: EngineHostState::Starting,
                 project_dir: Some(summary.root_dir.clone()),
@@ -249,13 +257,15 @@ impl EngineSupervisor {
         self.emit_status(app);
 
         if let Some(out) = stdout {
-            self.spawn_stream_reader(app.clone(), my_gen, out, false);
+            self.spawn_stream_reader(app.clone(), my_gen, out, false, None);
         }
-        if let Some(err) = stderr {
-            self.spawn_stream_reader(app.clone(), my_gen, err, true);
-        }
+        let stderr_done = stderr.map(|err| {
+            let signal = Arc::new((Mutex::new(false), Condvar::new()));
+            self.spawn_stream_reader(app.clone(), my_gen, err, true, Some(Arc::clone(&signal)));
+            signal
+        });
 
-        if let Err(err) = self.wait_until_ready(app, my_gen, brp_port) {
+        if let Err(err) = self.wait_until_ready(app, my_gen, brp_port, stderr_done.as_ref()) {
             self.mark_failed(Some(app), my_gen, err.clone());
             return Err(err);
         }
@@ -375,21 +385,70 @@ impl EngineSupervisor {
         }
     }
 
+    fn record_stderr_line(&self, expected_gen: u64, line: &str) {
+        if let Ok(mut guard) = self.inner.lock()
+            && guard.generation == expected_gen
+        {
+            if guard.recent_stderr.len() >= MAX_RECENT_STDERR_LINES {
+                guard.recent_stderr.pop_front();
+            }
+            guard.recent_stderr.push_back(line.to_owned());
+        }
+    }
+
+    fn recent_stderr_for_generation(&self, expected_gen: u64) -> Vec<String> {
+        self.inner
+            .lock()
+            .ok()
+            .filter(|guard| guard.generation == expected_gen)
+            .map(|guard| guard.recent_stderr.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn verified_build_for(&self, bin_path: &Path) -> Option<SystemTime> {
+        self.inner
+            .lock()
+            .ok()
+            .and_then(|guard| guard.verified_build.clone())
+            .and_then(|(path, mtime)| (path == bin_path).then_some(mtime))
+    }
+
+    fn set_verified_build(&self, bin_path: PathBuf, source_mtime: SystemTime) {
+        if let Ok(mut guard) = self.inner.lock() {
+            guard.verified_build = Some((bin_path, source_mtime));
+        }
+    }
+
     fn spawn_stream_reader<R: Read + Send + 'static>(
         &self,
         app: AppHandle,
         my_gen: u64,
         reader: R,
         watch_exit: bool,
+        done_signal: Option<Arc<(Mutex<bool>, Condvar)>>,
     ) {
         let supervisor = self.clone();
-        thread::Builder::new()
+        let thread_signal = done_signal.clone();
+        let spawned = thread::Builder::new()
             .name(if watch_exit {
                 "engine-stderr-log".to_owned()
             } else {
                 "engine-stdout-log".to_owned()
             })
             .spawn(move || {
+                struct SignalOnDrop(Option<Arc<(Mutex<bool>, Condvar)>>);
+                impl Drop for SignalOnDrop {
+                    fn drop(&mut self) {
+                        if let Some(signal) = self.0.take()
+                            && let Ok(mut done) = signal.0.lock()
+                        {
+                            *done = true;
+                            signal.1.notify_all();
+                        }
+                    }
+                }
+
+                let _signal_guard = SignalOnDrop(thread_signal);
                 let buf = BufReader::new(reader);
                 for line in buf.lines().map_while(Result::ok) {
                     if !supervisor.is_generation(my_gen) {
@@ -400,15 +459,27 @@ impl EngineSupervisor {
                     if trimmed.is_empty() {
                         continue;
                     }
+                    if watch_exit {
+                        supervisor.record_stderr_line(my_gen, trimmed);
+                    }
                     let (level, target, message) = parse_log_line(trimmed, watch_exit);
                     supervisor.push_log(Some(&app), level, target, message);
                 }
 
+                drop(_signal_guard);
+
                 if watch_exit {
                     supervisor.handle_unexpected_exit(&app, my_gen);
                 }
-            })
-            .ok();
+            });
+
+        if spawned.is_err()
+            && let Some(signal) = done_signal
+            && let Ok(mut done) = signal.0.lock()
+        {
+            *done = true;
+            signal.1.notify_all();
+        }
     }
 
     fn handle_unexpected_exit(&self, app: &AppHandle, expected_gen: u64) {
@@ -419,7 +490,7 @@ impl EngineSupervisor {
             && guard.generation == expected_gen
             && guard.status.state == EngineHostState::Running
         {
-            let exit_desc = if let Some(child) = guard.child.as_mut() {
+            let base_desc = if let Some(child) = guard.child.as_mut() {
                 match child.wait() {
                     Ok(exit) => format!("Engine Host exited unexpectedly ({exit})"),
                     Err(err) => format!("Engine Host terminated unexpectedly: {err}"),
@@ -427,6 +498,8 @@ impl EngineSupervisor {
             } else {
                 "Engine Host terminated unexpectedly".to_owned()
             };
+            let stderr_lines: Vec<String> = guard.recent_stderr.iter().cloned().collect();
+            let exit_desc = append_stderr_summary(&base_desc, &stderr_lines);
             guard.child = None;
             guard.status.state = EngineHostState::Crashed;
             guard.status.pid = None;
@@ -448,10 +521,11 @@ impl EngineSupervisor {
         _app: &AppHandle,
         expected_gen: u64,
         brp_port: u16,
+        stderr_done: Option<&Arc<(Mutex<bool>, Condvar)>>,
     ) -> Result<(), String> {
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
-            {
+            let exited_status: Option<ExitStatus> = {
                 let mut guard = self
                     .inner
                     .lock()
@@ -462,10 +536,18 @@ impl EngineSupervisor {
                 if let Some(child) = guard.child.as_mut()
                     && let Ok(Some(exit_status)) = child.try_wait()
                 {
-                    return Err(format!(
-                        "Engine Host exited before BRP became ready ({exit_status})"
-                    ));
+                    Some(exit_status)
+                } else {
+                    None
                 }
+            };
+
+            if let Some(exit_status) = exited_status {
+                if let Some(signal) = stderr_done {
+                    wait_for_stderr_drain(signal, STDERR_DRAIN_TIMEOUT);
+                }
+                let stderr_lines = self.recent_stderr_for_generation(expected_gen);
+                return Err(format_early_exit_error(exit_status, &stderr_lines));
             }
 
             if probe_brp_ready(brp_port) {
@@ -480,6 +562,73 @@ impl EngineSupervisor {
             READY_TIMEOUT.as_secs()
         ))
     }
+}
+
+fn wait_for_stderr_drain(signal: &(Mutex<bool>, Condvar), timeout: Duration) {
+    let Ok(mut done) = signal.0.lock() else {
+        return;
+    };
+    let deadline = Instant::now() + timeout;
+    while !*done {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let Ok((guard, wait_result)) = signal.1.wait_timeout(done, remaining) else {
+            break;
+        };
+        done = guard;
+        if wait_result.timed_out() {
+            break;
+        }
+    }
+}
+
+fn format_early_exit_error(exit_status: ExitStatus, stderr_lines: &[String]) -> String {
+    let base = format!("Engine Host exited before BRP became ready ({exit_status})");
+    append_stderr_summary(&base, stderr_lines)
+}
+
+fn append_stderr_summary(base: &str, stderr_lines: &[String]) -> String {
+    let summary = summarize_stderr_lines(stderr_lines);
+    if summary.is_empty() {
+        base.to_owned()
+    } else {
+        format!("{base}: {summary}")
+    }
+}
+
+fn summarize_stderr_lines(stderr_lines: &[String]) -> String {
+    const MAX_LINES: usize = 4;
+    const MAX_CHARS: usize = 600;
+
+    let non_empty: Vec<&str> = stderr_lines
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if non_empty.is_empty() {
+        return String::new();
+    }
+
+    // Prefer lines starting from the last explicit failure/panic marker when present.
+    let start_idx = non_empty
+        .iter()
+        .rposition(|line| {
+            line.contains("engine_runtime failed:")
+                || line.contains("panicked at")
+                || line.contains(" ERROR ")
+        })
+        .unwrap_or_else(|| non_empty.len().saturating_sub(MAX_LINES));
+
+    let end_idx = (start_idx + MAX_LINES).min(non_empty.len());
+    let mut joined = non_empty[start_idx..end_idx].join(" | ");
+    if joined.chars().count() > MAX_CHARS {
+        joined = joined.chars().take(MAX_CHARS).collect::<String>();
+        joined.push_str("...");
+    }
+    joined
 }
 
 fn resolve_or_build_runtime_binary(
@@ -502,49 +651,184 @@ fn resolve_or_build_runtime_binary(
     };
 
     if let Some(root) = engine_root {
+        let prefer_release = !cfg!(debug_assertions);
         let debug_bin = root.join("target/debug").join(bin_name);
-        if debug_bin.is_file() {
-            return Ok(debug_bin);
-        }
         let release_bin = root.join("target/release").join(bin_name);
-        if release_bin.is_file() {
-            return Ok(release_bin);
+        let (preferred_bin, fallback_bin) = if prefer_release {
+            (&release_bin, &debug_bin)
+        } else {
+            (&debug_bin, &release_bin)
+        };
+
+        let newest_source_mtime = latest_runtime_source_mtime(root);
+
+        if is_runtime_binary_fresh(
+            preferred_bin,
+            newest_source_mtime,
+            supervisor.verified_build_for(preferred_bin),
+        ) {
+            return Ok(preferred_bin.clone());
         }
 
-        supervisor.push_log(
-            Some(app),
-            "info",
-            "supervisor",
-            "engine_runtime binary not built yet; running `cargo build -p engine_runtime`..."
-                .to_owned(),
-        );
+        if !preferred_bin.is_file()
+            && is_runtime_binary_fresh(
+                fallback_bin,
+                newest_source_mtime,
+                supervisor.verified_build_for(fallback_bin),
+            )
+        {
+            return Ok(fallback_bin.clone());
+        }
+
+        let build_cmd_label = if prefer_release {
+            "cargo build --release -p engine_runtime"
+        } else {
+            "cargo build -p engine_runtime"
+        };
+        let reason = if preferred_bin.is_file() {
+            format!("engine_runtime binary is out of date; running `{build_cmd_label}`...")
+        } else {
+            format!("engine_runtime binary not built yet; running `{build_cmd_label}`...")
+        };
+        supervisor.push_log(Some(app), "info", "supervisor", reason);
 
         let manifest_path = root.join("Cargo.toml");
-        let output = Command::new("cargo")
-            .arg("build")
-            .arg("--manifest-path")
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build");
+        if prefer_release {
+            cmd.arg("--release");
+        }
+        cmd.arg("--manifest-path")
             .arg(&manifest_path)
             .arg("-p")
             .arg("engine_runtime")
             .current_dir(root)
-            .output()
-            .map_err(|err| format!("Failed to invoke `cargo build -p engine_runtime`: {err}"))?;
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+
+        let mut build_child = cmd
+            .spawn()
+            .map_err(|err| format!("Failed to invoke `{build_cmd_label}`: {err}"))?;
+
+        let mut stderr_tail = VecDeque::with_capacity(40);
+        if let Some(stderr) = build_child.stderr.take() {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines().map_while(Result::ok) {
+                if !supervisor.is_generation(my_gen) {
+                    let _ = build_child.kill();
+                    let _ = build_child.wait();
+                    return Err("Engine Host build cancelled".to_owned());
+                }
+                let cleaned = strip_ansi_codes(&line);
+                let trimmed = cleaned.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if stderr_tail.len() >= 40 {
+                    stderr_tail.pop_front();
+                }
+                stderr_tail.push_back(trimmed.to_owned());
+                let level = if trimmed.starts_with("error") {
+                    "error"
+                } else {
+                    "info"
+                };
+                supervisor.push_log(Some(app), level, "cargo", trimmed.to_owned());
+            }
+        }
+
+        let status = build_child
+            .wait()
+            .map_err(|err| format!("Failed while waiting for `{build_cmd_label}`: {err}"))?;
 
         if !supervisor.is_generation(my_gen) {
             return Err("Engine Host build cancelled".to_owned());
         }
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("`cargo build -p engine_runtime` failed:\n{stderr}"));
+        if !status.success() {
+            let tail_text = stderr_tail
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+            return Err(format!("`{build_cmd_label}` failed ({status}):\n{tail_text}"));
         }
 
-        if debug_bin.is_file() {
-            return Ok(debug_bin);
+        if preferred_bin.is_file() {
+            if let Some(source_mtime) = newest_source_mtime {
+                supervisor.set_verified_build(preferred_bin.clone(), source_mtime);
+            }
+            return Ok(preferred_bin.clone());
         }
     }
 
     Err("Could not locate `engine_runtime` executable; set BEVY9_RUNTIME_BIN or run from the repository".to_owned())
+}
+
+fn is_runtime_binary_fresh(
+    bin_path: &Path,
+    newest_source_mtime: Option<SystemTime>,
+    verified_source_mtime: Option<SystemTime>,
+) -> bool {
+    if !bin_path.is_file() {
+        return false;
+    }
+    let Some(newest_source) = newest_source_mtime else {
+        return true;
+    };
+    let Ok(bin_mtime) = fs::metadata(bin_path).and_then(|meta| meta.modified()) else {
+        return false;
+    };
+    let effective_mtime = verified_source_mtime.map_or(bin_mtime, |verified| bin_mtime.max(verified));
+    effective_mtime >= newest_source
+}
+
+fn latest_runtime_source_mtime(engine_root: &Path) -> Option<SystemTime> {
+    let mut newest: Option<SystemTime> = None;
+
+    for top_file in ["Cargo.toml", "Cargo.lock"] {
+        record_file_mtime(&engine_root.join(top_file), &mut newest);
+    }
+    scan_dir_mtime(&engine_root.join(".cargo"), &mut newest);
+    scan_dir_mtime(&engine_root.join("crates"), &mut newest);
+
+    newest
+}
+
+fn record_file_mtime(path: &Path, newest: &mut Option<SystemTime>) {
+    if let Ok(meta) = fs::metadata(path)
+        && meta.is_file()
+        && let Ok(modified) = meta.modified()
+    {
+        *newest = Some(newest.map_or(modified, |prev| prev.max(modified)));
+    }
+}
+
+fn scan_dir_mtime(dir: &Path, newest: &mut Option<SystemTime>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let name = entry.file_name();
+            if matches!(
+                name.to_str(),
+                Some("target" | "tests" | "benches" | "examples" | ".git")
+            ) {
+                continue;
+            }
+            scan_dir_mtime(&path, newest);
+        } else if file_type.is_file()
+            && let Ok(meta) = entry.metadata()
+            && let Ok(modified) = meta.modified()
+        {
+            *newest = Some(newest.map_or(modified, |prev| prev.max(modified)));
+        }
+    }
 }
 
 fn allocate_port(preferred: u16) -> u16 {
@@ -624,6 +908,113 @@ fn parse_log_line(line: &str, default_stderr: bool) -> (&'static str, &str, Stri
         }
     }
 
-    let level = if default_stderr { "warn" } else { "info" };
+    let level = if default_stderr {
+        if line.contains("panicked at")
+            || line.starts_with("engine_runtime failed:")
+            || line.starts_with("error:")
+            || line.starts_with("Error:")
+        {
+            "error"
+        } else {
+            "warn"
+        }
+    } else {
+        "info"
+    };
     (level, "engine_runtime", line.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runtime_binary_freshness_detects_newer_crate_sources_and_ignores_tests() {
+        let tmp = tempfile::tempdir().expect("tempdir should create");
+        let root = tmp.path();
+        let src_dir = root.join("crates/engine_scripting/src");
+        let tests_dir = root.join("crates/engine_scripting/tests");
+        let bin_dir = root.join("target/debug");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&tests_dir).unwrap();
+        fs::create_dir_all(&bin_dir).unwrap();
+
+        fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
+        fs::write(root.join("Cargo.lock"), "# lock\n").unwrap();
+        fs::write(src_dir.join("lib.rs"), "// initial\n").unwrap();
+
+        thread::sleep(Duration::from_millis(20));
+        let bin_path = bin_dir.join("engine_runtime");
+        fs::write(&bin_path, b"binary").unwrap();
+
+        let newest_initial = latest_runtime_source_mtime(root);
+        assert!(
+            is_runtime_binary_fresh(&bin_path, newest_initial, None),
+            "binary built after sources must be considered fresh"
+        );
+
+        // Editing an integration test file must not mark the runtime binary stale.
+        thread::sleep(Duration::from_millis(20));
+        fs::write(tests_dir.join("smoke.rs"), "// test only\n").unwrap();
+        let newest_after_test_edit = latest_runtime_source_mtime(root);
+        assert!(
+            is_runtime_binary_fresh(&bin_path, newest_after_test_edit, None),
+            "test-only edits should not invalidate engine_runtime binary"
+        );
+
+        // Editing a crate source file after the binary was built must mark the binary stale.
+        thread::sleep(Duration::from_millis(20));
+        fs::write(src_dir.join("lib.rs"), "// updated script component\n").unwrap();
+        let newest_after_src_edit = latest_runtime_source_mtime(root);
+        assert!(
+            !is_runtime_binary_fresh(&bin_path, newest_after_src_edit, None),
+            "source edits newer than binary must force rebuild"
+        );
+
+        // Once verified at `newest_after_src_edit`, it stays fresh until a newer edit arrives.
+        assert!(is_runtime_binary_fresh(
+            &bin_path,
+            newest_after_src_edit,
+            newest_after_src_edit
+        ));
+    }
+
+    #[test]
+    fn summarize_stderr_surfaces_runtime_failure_and_panics() {
+        let lines = vec![
+            "2026-11-28T11:20:30Z  INFO bevy_app: starting".to_owned(),
+            "engine_runtime failed: failed to parse level RON: no registration found for `engine_scripting::component::ScriptComponent`".to_owned(),
+        ];
+        let summary = append_stderr_summary(
+            "Engine Host exited before BRP became ready (exit status: 1)",
+            &lines,
+        );
+        assert!(summary.contains("exit status: 1"));
+        assert!(summary.contains("engine_runtime failed:"));
+        assert!(summary.contains("ScriptComponent"));
+
+        let empty = append_stderr_summary(
+            "Engine Host exited before BRP became ready (exit status: 1)",
+            &[],
+        );
+        assert_eq!(
+            empty,
+            "Engine Host exited before BRP became ready (exit status: 1)"
+        );
+    }
+
+    #[test]
+    fn parse_log_line_marks_runtime_errors_and_panics_as_error() {
+        let (level, target, msg) = parse_log_line(
+            "engine_runtime failed: failed to parse level RON",
+            true,
+        );
+        assert_eq!(level, "error");
+        assert_eq!(target, "engine_runtime");
+        assert!(msg.contains("failed to parse level RON"));
+
+        let (panic_level, _, _) =
+            parse_log_line("thread 'main' panicked at crates/foo.rs:10:5:", true);
+        assert_eq!(panic_level, "error");
+    }
 }

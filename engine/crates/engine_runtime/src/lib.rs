@@ -113,12 +113,17 @@ impl RuntimeCli {
 pub struct RuntimeOptions {
     /// Whether to install Bevy's [`LogPlugin`] global tracing subscriber.
     pub enable_logging: bool,
+    /// When `true`, skips OS windowing (`WinitPlugin`) and GPU rendering plugins in
+    /// [`RuntimeMode::Editor`] / [`RuntimeMode::Window`] so Editor Host startup, scene loading,
+    /// scripting registration, and BRP/IPC readiness can be exercised in headless tests.
+    pub headless_graphics: bool,
 }
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             enable_logging: true,
+            headless_graphics: false,
         }
     }
 }
@@ -150,7 +155,7 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
 
     let mode = cli.effective_mode();
     let world_mode = cli.world_mode.unwrap_or(manifest.project.default_mode);
-    let enable_processor = mode != RuntimeMode::Headless;
+    let enable_processor = mode != RuntimeMode::Headless && !options.headless_graphics;
     let shared_registry = paths.as_ref().map_or_else(
         SharedAssetRegistry::default,
         |project_paths| {
@@ -252,26 +257,50 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
                 }
             };
 
-            let plugins = DefaultPlugins.set(window_plugin).set(asset_plugin);
-
-            if options.enable_logging {
-                app.add_plugins(plugins);
+            if options.headless_graphics {
+                app.add_plugins(
+                    MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(Duration::from_millis(1))),
+                );
+                if options.enable_logging {
+                    app.add_plugins(LogPlugin::default());
+                }
+                app.add_plugins((
+                    asset_plugin,
+                    TransformPlugin,
+                    StatesPlugin,
+                    bevy::input::InputPlugin,
+                    window_plugin,
+                    ImagePlugin::default(),
+                    bevy::mesh::MeshPlugin,
+                    bevy::camera::CameraPlugin,
+                    bevy::light::LightPlugin,
+                    bevy::text::TextPlugin,
+                    bevy::sprite::SpritePlugin,
+                    bevy::gizmos::GizmoPlugin,
+                    DefaultPickingPlugins,
+                ));
             } else {
-                app.add_plugins(plugins.disable::<LogPlugin>());
-            }
+                let plugins = DefaultPlugins.set(window_plugin).set(asset_plugin);
 
-            if let Some(ddc) = &ddc_config {
-                configure_asset_processor_ddc_log(&mut app, ddc);
-            }
+                if options.enable_logging {
+                    app.add_plugins(plugins);
+                } else {
+                    app.add_plugins(plugins.disable::<LogPlugin>());
+                }
 
-            if mode == RuntimeMode::Editor {
-                // Keep the main loop ticking at 60 Hz when 0 native OS windows exist.
-                app.insert_resource(WinitSettings {
-                    focused_mode: UpdateMode::Continuous,
-                    unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(
-                        1.0 / 60.0,
-                    )),
-                });
+                if let Some(ddc) = &ddc_config {
+                    configure_asset_processor_ddc_log(&mut app, ddc);
+                }
+
+                if mode == RuntimeMode::Editor {
+                    // Keep the main loop ticking at 60 Hz when 0 native OS windows exist.
+                    app.insert_resource(WinitSettings {
+                        focused_mode: UpdateMode::Continuous,
+                        unfocused_mode: UpdateMode::reactive_low_power(Duration::from_secs_f64(
+                            1.0 / 60.0,
+                        )),
+                    });
+                }
             }
 
             app.add_plugins(EngineCorePlugin);
@@ -297,7 +326,7 @@ pub fn build_app_with_options(cli: &RuntimeCli, options: RuntimeOptions) -> anyh
         debug: cli.physics_debug && mode != RuntimeMode::Headless,
     });
     app.insert_resource(AudioOptions {
-        device: mode != RuntimeMode::Headless,
+        device: mode != RuntimeMode::Headless && !options.headless_graphics,
         gameplay: mode == RuntimeMode::Window,
     });
     app.insert_resource(if mode == RuntimeMode::Editor {

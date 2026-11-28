@@ -2,6 +2,8 @@
 
 use std::{
     fs,
+    io::{Read, Write},
+    net::{TcpListener, TcpStream},
     path::PathBuf,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -15,8 +17,7 @@ use bevy::{
     app::{AppExit, Last},
     asset::Assets,
     diagnostic::FrameCount,
-    ecs::schedule::IntoScheduleConfigs,
-    ecs::system::Res,
+    ecs::{reflect::AppTypeRegistry, schedule::IntoScheduleConfigs, system::Res},
     input::keyboard::KeyCode,
     math::{Quat, Vec3},
     time::TimeUpdateStrategy,
@@ -25,9 +26,9 @@ use bevy::{
 use clap::Parser;
 use engine_audio::{AudioBackend, AudioBus, AudioEngine, AudioError, BusSettings, PlaySound, VoiceId};
 use engine_core::{EntityGuid, EntityGuidMap, ProjectManifest, ProjectPaths, WorldMode};
-use engine_editor_bridge::{DEFAULT_BRP_PORT, DEFAULT_IPC_PORT};
+use engine_editor_bridge::{EditorIpcServer, DEFAULT_BRP_PORT, DEFAULT_IPC_PORT};
 use engine_input::{ForwardedInput, InputMappingAsset, ProjectInputMapping};
-use engine_physics::CharacterMotion2D;
+use engine_physics::{CharacterMotion2D, PhysicsOptions};
 use engine_runtime::{build_app_with_options, RuntimeCli, RuntimeMode, RuntimeOptions};
 use engine_scene::{ActiveScene, SpriteDesc};
 use engine_scripting::{
@@ -103,6 +104,7 @@ fn headless_empty_project_runs_and_exits() {
         &cli,
         RuntimeOptions {
             enable_logging: false,
+            ..Default::default()
         },
     )
     .expect("headless app should build for empty_project");
@@ -174,6 +176,7 @@ fn headless_sandbox_3d_and_2d_load_startup_scenes() {
             &cli,
             RuntimeOptions {
                 enable_logging: false,
+                ..Default::default()
             },
         )
         .expect("headless sandbox app should build");
@@ -292,6 +295,7 @@ fn sandbox_3d_and_2d_rhai_scripts_compile_and_simulate_without_errors() {
             &cli,
             RuntimeOptions {
                 enable_logging: false,
+                ..Default::default()
             },
         )
         .expect("sandbox_3d headless app should build");
@@ -421,6 +425,7 @@ fn sandbox_3d_and_2d_rhai_scripts_compile_and_simulate_without_errors() {
             &cli,
             RuntimeOptions {
                 enable_logging: false,
+                ..Default::default()
             },
         )
         .expect("sandbox_2d headless app should build");
@@ -554,6 +559,153 @@ fn sandbox_3d_and_2d_rhai_scripts_compile_and_simulate_without_errors() {
         assert!(
             played_paths.iter().any(|p| p.ends_with("pickup.wav")),
             "sandbox_2d must play pickup.wav, played: {played_paths:?}"
+        );
+    }
+}
+
+fn allocate_ephemeral_port() -> u16 {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("ephemeral port should bind");
+    listener
+        .local_addr()
+        .expect("listener local_addr should be available")
+        .port()
+}
+
+fn probe_brp_world_tree_http(port: u16) -> String {
+    let body = r#"{"jsonrpc":"2.0","id":0,"method":"engine.world.tree"}"#;
+    let req = format!(
+        "POST / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+
+    let mut stream = None;
+    for _ in 0..100 {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(connected) => {
+                stream = Some(connected);
+                break;
+            }
+            Err(_) => thread::sleep(Duration::from_millis(10)),
+        }
+    }
+    let mut stream = stream.expect("Editor Host BRP HTTP server should accept connections");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("set_read_timeout should succeed");
+    stream
+        .write_all(req.as_bytes())
+        .expect("BRP HTTP request write should succeed");
+
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .expect("BRP HTTP response read should succeed");
+    String::from_utf8(raw).expect("BRP HTTP response should be valid UTF-8")
+}
+
+#[test]
+fn editor_mode_boots_and_passes_brp_readiness_for_both_sandboxes() {
+    for (dir_name, expected_scene_name, expected_mode, expected_entities, scripted_guid) in [
+        (
+            "sandbox_3d",
+            "Sandbox 3D",
+            WorldMode::Mode3D,
+            8usize,
+            "10000000-0000-4000-8000-000000000005",
+        ),
+        (
+            "sandbox_2d",
+            "Sandbox 2D",
+            WorldMode::Mode2D,
+            7usize,
+            "20000000-0000-4000-8000-000000000003",
+        ),
+    ] {
+        let brp_port = allocate_ephemeral_port();
+        let ipc_port = allocate_ephemeral_port();
+        let cli = RuntimeCli {
+            project: Some(sample_project_dir(dir_name)),
+            scene: None,
+            mode: RuntimeMode::Editor,
+            headless: false,
+            max_frames: None,
+            physics_debug: false,
+            title: None,
+            world_mode: None,
+            brp_port,
+            ipc_port,
+        };
+
+        let mut app = build_app_with_options(
+            &cli,
+            RuntimeOptions {
+                enable_logging: false,
+                headless_graphics: true,
+            },
+        )
+        .unwrap_or_else(|err| panic!("Editor Host app should build for {dir_name}: {err:#}"));
+
+        {
+            let world = app.world();
+            let active_scene = world.resource::<ActiveScene>();
+            assert_eq!(active_scene.name, expected_scene_name);
+            assert_eq!(active_scene.world_mode, expected_mode);
+            assert_eq!(world.resource::<EntityGuidMap>().len(), expected_entities);
+            assert!(
+                !world.resource::<ScriptExecutionOptions>().enabled,
+                "Editor mode must start with scripts paused until PIE Play"
+            );
+            assert!(
+                !world.resource::<PhysicsOptions>().simulate,
+                "Editor mode must start with physics paused until PIE Play"
+            );
+            assert!(
+                world.contains_resource::<EditorIpcServer>(),
+                "Editor mode must bind WebSocket IPC server"
+            );
+            let registry = world.resource::<AppTypeRegistry>().read();
+            assert!(
+                registry
+                    .get_with_type_path("engine_scripting::component::ScriptComponent")
+                    .is_some(),
+                "ScriptComponent must be registered in Editor mode AppTypeRegistry"
+            );
+            let scripted_entity = world
+                .resource::<EntityGuidMap>()
+                .get_entity(EntityGuid::parse_str(scripted_guid).unwrap())
+                .expect("scripted entity must exist in loaded editor scene");
+            assert!(
+                world.get::<ScriptComponent>(scripted_entity).is_some(),
+                "scripted entity must retain ScriptComponent when loaded in Editor mode"
+            );
+        }
+
+        // Pump startup and initial frames, then issue the exact HTTP BRP readiness probe
+        // that `engine/editor/src-tauri/src/supervisor.rs` sends.
+        app.update();
+        app.update();
+
+        let probe_handle = thread::spawn(move || probe_brp_world_tree_http(brp_port));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !probe_handle.is_finished() {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for Editor Host BRP readiness probe on {dir_name}"
+            );
+            app.update();
+            thread::sleep(Duration::from_millis(5));
+        }
+
+        let response = probe_handle
+            .join()
+            .expect("BRP probe client thread should not panic");
+        assert!(
+            response.starts_with("HTTP/1.1 200") || response.starts_with("HTTP/1.0 200"),
+            "Editor Host BRP readiness probe for {dir_name} must return HTTP 200, got:\n{response}"
+        );
+        assert!(
+            response.contains(scripted_guid),
+            "BRP engine.world.tree response for {dir_name} must include scripted entity {scripted_guid}, got:\n{response}"
         );
     }
 }
