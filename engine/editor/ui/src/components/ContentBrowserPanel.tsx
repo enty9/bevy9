@@ -2,13 +2,16 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type DragEvent as ReactDragEvent,
 } from "react";
 import {
   Box,
+  Check,
   ChevronRight,
-  Code2,
+  Copy,
+  FileCode2,
   Film,
   Folder,
   FolderPlus,
@@ -95,7 +98,7 @@ function renderKindIcon(kind: AssetKind, size = 18) {
     case "scene":
       return <Film size={size} className="cb-kind-icon kind-scene" />;
     case "script":
-      return <Code2 size={size} className="cb-kind-icon kind-script" />;
+      return <FileCode2 size={size} className="cb-kind-icon kind-script" />;
     case "material":
       return <Sparkles size={size} className="cb-kind-icon kind-material" />;
     case "audio":
@@ -160,6 +163,16 @@ export function ContentBrowserPanel({
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
+  const copyTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current);
+      }
+    };
+  }, []);
 
   const selectedAsset = useMemo(
     () =>
@@ -213,6 +226,9 @@ export function ContentBrowserPanel({
       );
       return;
     }
+    if (asset.kind === "script") {
+      return;
+    }
     if (asset.kind === "scene" && onOpenScenePath && snapshot) {
       onOpenScenePath(`${snapshot.root_dir}/${asset.relative_path}`);
     } else if (asset.kind === "audio") {
@@ -232,6 +248,11 @@ export function ContentBrowserPanel({
   useEffect(() => {
     setBlockedDependents(null);
     setActionError(null);
+    if (copyTimerRef.current !== null) {
+      window.clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = null;
+    }
+    setCopiedPath(false);
     if (!selectedAsset) {
       setRenamePath("");
       setTagsDraft("");
@@ -541,7 +562,7 @@ export function ContentBrowserPanel({
             className="ghost-btn"
             disabled={!brpClient || busyAction}
             onClick={() => void handleImportClick()}
-            title="Import PNG/glTF/RON files into current folder"
+            title="Import PNG/glTF/RON/Rhai/Audio files into current folder"
           >
             <Upload size={13} />
             Import
@@ -705,6 +726,10 @@ export function ContentBrowserPanel({
                   isEditableModel(asset) && onOpenModel
                     ? "Double-click to edit in Blender · "
                     : "";
+                const dragHint =
+                  asset.kind === "script"
+                    ? "Drag to a ScriptComponent slot in Inspector"
+                    : "Drag to Viewport or Inspector";
                 return (
                   <div
                     key={asset.uuid}
@@ -714,7 +739,7 @@ export function ContentBrowserPanel({
                     onDragEnd={() => clearDraggedAsset()}
                     onClick={() => selectAsset(asset)}
                     onDoubleClick={() => activateAsset(asset)}
-                    title={`${asset.relative_path}\nUUID: ${asset.uuid}\n${modelHint}Drag to Viewport or Inspector`}
+                    title={`${asset.relative_path}\nUUID: ${asset.uuid}\n${modelHint}${dragHint}`}
                   >
                     <div className="cb-thumb-box">
                       {thumbUrl ? (
@@ -732,7 +757,11 @@ export function ContentBrowserPanel({
                           BLENDER
                         </span>
                       )}
-                      <span className="cb-badge">{kindShortLabel(asset.kind)}</span>
+                      <span
+                        className={`cb-badge ${asset.kind === "script" ? "cb-badge-script" : ""}`}
+                      >
+                        {kindShortLabel(asset.kind)}
+                      </span>
                     </div>
                     <div className="cb-card-name truncate">{asset.name}</div>
                     <div className="cb-card-sub truncate">
@@ -831,6 +860,43 @@ export function ContentBrowserPanel({
                     Spawn in scene
                   </button>
                 )}
+              </div>
+            )}
+
+            {selectedAsset.kind === "script" && (
+              <div className="script-details-card">
+                <div className="script-details-top">
+                  <span className="badge badge-script">Rhai Script</span>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    title="Copy relative script path for ScriptComponent.script_path"
+                    onClick={() => {
+                      if (navigator.clipboard?.writeText) {
+                        void navigator.clipboard
+                          .writeText(selectedAsset.relative_path)
+                          .then(() => {
+                            setCopiedPath(true);
+                            if (copyTimerRef.current !== null) {
+                              window.clearTimeout(copyTimerRef.current);
+                            }
+                            copyTimerRef.current = window.setTimeout(() => {
+                              copyTimerRef.current = null;
+                              setCopiedPath(false);
+                            }, 1500);
+                          })
+                          .catch(() => {});
+                      }
+                    }}
+                  >
+                    {copiedPath ? <Check size={12} /> : <Copy size={12} />}
+                    {copiedPath ? "Copied" : "Copy path"}
+                  </button>
+                </div>
+                <div className="muted">
+                  Drag onto a <code>ScriptComponent</code> asset slot in the Inspector, or reference{" "}
+                  <code className="cb-mono">{selectedAsset.relative_path}</code>.
+                </div>
               </div>
             )}
 

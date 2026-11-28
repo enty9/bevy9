@@ -195,6 +195,20 @@ const CURATED_DEFAULTS: Record<string, unknown> = {
     anchor: [0, 0, 0],
     target_anchor: [0, 0, 0],
   },
+  "engine_scripting::component::ScriptComponent": {
+    script: null,
+    script_path: "",
+    enabled: true,
+    properties: {
+      values: {},
+    },
+  },
+  "engine_scripting::component::ScriptProperties": {
+    values: {},
+  },
+  "engine_scripting::component::ScriptPropertyValue": {
+    Float: 0.0,
+  },
   "bevy_color::color::Color": {
     Srgba: { red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0 },
   },
@@ -283,12 +297,15 @@ const CURATED_VARIANT_DEFAULTS: Record<string, Record<string, unknown>> = {
 
 export function getComponentBadgeCategory(
   typePath: string,
-): "Physics" | "Audio" | "Scene" | null {
+): "Physics" | "Audio" | "Scene" | "Script" | null {
   if (typePath.startsWith("engine_physics::")) {
     return "Physics";
   }
   if (typePath.startsWith("engine_audio::")) {
     return "Audio";
+  }
+  if (typePath.startsWith("engine_scripting::")) {
+    return "Script";
   }
   if (typePath.startsWith("engine_scene::components::")) {
     return "Scene";
@@ -334,9 +351,21 @@ export function isComputedRuntimeComponent(typePath: string): boolean {
 }
 
 export function sortComponentPaths(paths: string[]): string[] {
+  const rank = (path: string): number => {
+    if (path in COMPONENT_PRIORITY) {
+      return COMPONENT_PRIORITY[path];
+    }
+    if (path.startsWith("engine_scene::")) {
+      return 10;
+    }
+    if (path.startsWith("engine_scripting::")) {
+      return 15;
+    }
+    return 50;
+  };
   return [...paths].sort((a, b) => {
-    const pa = COMPONENT_PRIORITY[a] ?? (a.startsWith("engine_scene::") ? 10 : 50);
-    const pb = COMPONENT_PRIORITY[b] ?? (b.startsWith("engine_scene::") ? 10 : 50);
+    const pa = rank(a);
+    const pb = rank(b);
     if (pa !== pb) {
       return pa - pb;
     }

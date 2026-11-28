@@ -263,6 +263,9 @@ function inferAssetKindFilter(
   if (parentTypePath?.includes("AudioEmitter") && fieldLabel === "clip") {
     return "audio";
   }
+  if (parentTypePath?.includes("ScriptComponent") && fieldLabel === "script") {
+    return "script";
+  }
   if (parentTypePath?.includes("SceneTilemap")) {
     return "tilemap";
   }
@@ -963,6 +966,482 @@ function ColliderField({
   );
 }
 
+const SCRIPT_PROP_KINDS = [
+  "Float",
+  "Int",
+  "Bool",
+  "String",
+  "Vec2",
+  "Vec3",
+] as const;
+
+type ScriptPropKind = (typeof SCRIPT_PROP_KINDS)[number];
+
+type ScriptPropertyValueJson =
+  | { Bool: boolean }
+  | { Int: number }
+  | { Float: number }
+  | { String: string }
+  | { Vec2: [number, number] }
+  | { Vec3: [number, number, number] };
+
+interface ParsedScriptProp {
+  kind: ScriptPropKind;
+  boolVal: boolean;
+  numVal: number;
+  strVal: string;
+  vec2Val: [number, number];
+  vec3Val: [number, number, number];
+}
+
+function defaultScriptPropValue(kind: ScriptPropKind): ScriptPropertyValueJson {
+  switch (kind) {
+    case "Bool":
+      return { Bool: false };
+    case "Int":
+      return { Int: 0 };
+    case "Float":
+      return { Float: 0.0 };
+    case "String":
+      return { String: "" };
+    case "Vec2":
+      return { Vec2: [0, 0] };
+    case "Vec3":
+      return { Vec3: [0, 0, 0] };
+  }
+}
+
+function parseScriptPropValue(raw: unknown): ParsedScriptProp {
+  const base: ParsedScriptProp = {
+    kind: "Float",
+    boolVal: false,
+    numVal: 0,
+    strVal: "",
+    vec2Val: [0, 0],
+    vec3Val: [0, 0, 0],
+  };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return base;
+  }
+  const rec = raw as Record<string, unknown>;
+  if ("Bool" in rec) {
+    return { ...base, kind: "Bool", boolVal: Boolean(rec.Bool) };
+  }
+  if ("Int" in rec) {
+    const n = typeof rec.Int === "number" && Number.isFinite(rec.Int) ? Math.trunc(rec.Int) : 0;
+    return { ...base, kind: "Int", numVal: n };
+  }
+  if ("Float" in rec) {
+    const n = typeof rec.Float === "number" && Number.isFinite(rec.Float) ? rec.Float : 0;
+    return { ...base, kind: "Float", numVal: n };
+  }
+  if ("String" in rec) {
+    return { ...base, kind: "String", strVal: typeof rec.String === "string" ? rec.String : "" };
+  }
+  if ("Vec2" in rec) {
+    const arr = Array.isArray(rec.Vec2) ? rec.Vec2 : [0, 0];
+    return {
+      ...base,
+      kind: "Vec2",
+      vec2Val: [Number(arr[0]) || 0, Number(arr[1]) || 0],
+    };
+  }
+  if ("Vec3" in rec) {
+    const arr = Array.isArray(rec.Vec3) ? rec.Vec3 : [0, 0, 0];
+    return {
+      ...base,
+      kind: "Vec3",
+      vec3Val: [Number(arr[0]) || 0, Number(arr[1]) || 0, Number(arr[2]) || 0],
+    };
+  }
+  return base;
+}
+
+function convertScriptPropKind(
+  current: ParsedScriptProp,
+  target: ScriptPropKind,
+): ScriptPropertyValueJson {
+  if (current.kind === target) {
+    switch (target) {
+      case "Bool":
+        return { Bool: current.boolVal };
+      case "Int":
+        return { Int: Math.trunc(current.numVal) };
+      case "Float":
+        return { Float: current.numVal };
+      case "String":
+        return { String: current.strVal };
+      case "Vec2":
+        return { Vec2: current.vec2Val };
+      case "Vec3":
+        return { Vec3: current.vec3Val };
+    }
+  }
+  switch (target) {
+    case "Bool":
+      if (current.kind === "Int" || current.kind === "Float") {
+        return { Bool: current.numVal !== 0 };
+      }
+      if (current.kind === "String") {
+        return { Bool: current.strVal.trim().toLowerCase() === "true" };
+      }
+      return { Bool: false };
+    case "Int":
+      if (current.kind === "Float") {
+        return { Int: Math.trunc(current.numVal) };
+      }
+      if (current.kind === "Bool") {
+        return { Int: current.boolVal ? 1 : 0 };
+      }
+      return { Int: 0 };
+    case "Float":
+      if (current.kind === "Int") {
+        return { Float: current.numVal };
+      }
+      if (current.kind === "Bool") {
+        return { Float: current.boolVal ? 1.0 : 0.0 };
+      }
+      return { Float: 0.0 };
+    case "String":
+      if (current.kind === "Bool") {
+        return { String: current.boolVal ? "true" : "false" };
+      }
+      if (current.kind === "Int" || current.kind === "Float") {
+        return { String: String(current.numVal) };
+      }
+      return { String: "" };
+    case "Vec2":
+      if (current.kind === "Vec3") {
+        return { Vec2: [current.vec3Val[0], current.vec3Val[1]] };
+      }
+      return { Vec2: [0, 0] };
+    case "Vec3":
+      if (current.kind === "Vec2") {
+        return { Vec3: [current.vec2Val[0], current.vec2Val[1], 0] };
+      }
+      return { Vec3: [0, 0, 0] };
+  }
+}
+
+function readScriptPropertiesMap(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+  const obj = raw as Record<string, unknown>;
+  if (obj.values && typeof obj.values === "object" && !Array.isArray(obj.values)) {
+    return obj.values as Record<string, unknown>;
+  }
+  return {};
+}
+
+interface ScriptPropertiesFieldProps {
+  value: unknown;
+  onChange: (next: { values: Record<string, unknown> }, immediate?: boolean) => void;
+}
+
+function ScriptPropertiesField({ value, onChange }: ScriptPropertiesFieldProps) {
+  const [newName, setNewName] = useState("");
+  const [newKind, setNewKind] = useState<ScriptPropKind>("Float");
+  const [addError, setAddError] = useState<string | null>(null);
+
+  const propMap = readScriptPropertiesMap(value);
+  const propKeys = Object.keys(propMap).sort((a, b) => a.localeCompare(b));
+
+  function updateProp(key: string, nextVal: ScriptPropertyValueJson, immediate = false) {
+    onChange({ values: { ...propMap, [key]: nextVal } }, immediate);
+  }
+
+  function removeProp(key: string) {
+    const copy = { ...propMap };
+    delete copy[key];
+    onChange({ values: copy }, true);
+  }
+
+  function handleAddProperty() {
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      setAddError("Enter a property name.");
+      return;
+    }
+    if (trimmed in propMap) {
+      setAddError(`Property '${trimmed}' already exists.`);
+      return;
+    }
+    setAddError(null);
+    onChange({ values: { ...propMap, [trimmed]: defaultScriptPropValue(newKind) } }, true);
+    setNewName("");
+  }
+
+  return (
+    <div className="script-props-section">
+      <div className="script-props-header">
+        <span className="nested-struct-title">Properties</span>
+        <span className="badge">{propKeys.length}</span>
+      </div>
+
+      {propKeys.length === 0 ? (
+        <div className="muted script-props-empty">
+          No properties configured. Add keys below to expose them as <code>props.&lt;name&gt;</code> in Rhai.
+        </div>
+      ) : (
+        <div className="script-props-list">
+          {propKeys.map((key) => {
+            const parsed = parseScriptPropValue(propMap[key]);
+            return (
+              <div key={key} className="script-prop-card">
+                <div className="script-prop-top">
+                  <span className="script-prop-name truncate" title={key}>
+                    {key}
+                  </span>
+                  <div className="script-prop-controls">
+                    <select
+                      className="select-input script-prop-type"
+                      aria-label={`Type for property ${key}`}
+                      value={parsed.kind}
+                      onChange={(e) => {
+                        const targetKind = e.target.value as ScriptPropKind;
+                        updateProp(key, convertScriptPropKind(parsed, targetKind), true);
+                      }}
+                    >
+                      {SCRIPT_PROP_KINDS.map((kind) => (
+                        <option key={kind} value={kind}>
+                          {kind}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="ghost-btn icon-mini danger"
+                      title={`Remove property '${key}'`}
+                      aria-label={`Remove property ${key}`}
+                      onClick={() => removeProp(key)}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="script-prop-value">
+                  {parsed.kind === "Bool" && (
+                    <label className="option-toggle">
+                      <input
+                        type="checkbox"
+                        checked={parsed.boolVal}
+                        onChange={(e) =>
+                          updateProp(key, { Bool: e.target.checked }, true)
+                        }
+                      />
+                      <span className="muted">{parsed.boolVal ? "true" : "false"}</span>
+                    </label>
+                  )}
+
+                  {parsed.kind === "Int" && (
+                    <NumericInput
+                      value={parsed.numVal}
+                      step={1}
+                      onChange={(nextNum) => {
+                        const truncated = Math.trunc(nextNum);
+                        updateProp(key, { Int: truncated === 0 ? 0 : truncated });
+                      }}
+                    />
+                  )}
+
+                  {parsed.kind === "Float" && (
+                    <NumericInput
+                      value={parsed.numVal}
+                      step={0.1}
+                      onChange={(nextNum) => updateProp(key, { Float: nextNum })}
+                    />
+                  )}
+
+                  {parsed.kind === "String" && (
+                    <input
+                      type="text"
+                      className="text-input script-prop-text"
+                      value={parsed.strVal}
+                      onChange={(e) => updateProp(key, { String: e.target.value })}
+                    />
+                  )}
+
+                  {parsed.kind === "Vec2" && (
+                    <VectorRow
+                      axes={["X", "Y"]}
+                      values={parsed.vec2Val}
+                      onChange={(next) =>
+                        updateProp(key, { Vec2: [next[0] ?? 0, next[1] ?? 0] })
+                      }
+                    />
+                  )}
+
+                  {parsed.kind === "Vec3" && (
+                    <VectorRow
+                      axes={["X", "Y", "Z"]}
+                      values={parsed.vec3Val}
+                      onChange={(next) =>
+                        updateProp(key, {
+                          Vec3: [next[0] ?? 0, next[1] ?? 0, next[2] ?? 0],
+                        })
+                      }
+                    />
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <form
+        className="script-prop-add"
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleAddProperty();
+        }}
+      >
+        <input
+          type="text"
+          className="text-input script-prop-add-name"
+          aria-label="New script property name"
+          placeholder="New property (e.g. move_speed)"
+          value={newName}
+          onChange={(e) => {
+            setNewName(e.target.value);
+            if (addError) setAddError(null);
+          }}
+        />
+        <select
+          className="select-input script-prop-add-kind"
+          aria-label="New script property type"
+          value={newKind}
+          onChange={(e) => setNewKind(e.target.value as ScriptPropKind)}
+        >
+          {SCRIPT_PROP_KINDS.map((kind) => (
+            <option key={kind} value={kind}>
+              {kind}
+            </option>
+          ))}
+        </select>
+        <button type="submit" className="primary" disabled={!newName.trim()}>
+          <Plus size={12} />
+          Add
+        </button>
+      </form>
+      {addError && (
+        <div className="script-prop-error" role="alert">
+          {addError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ScriptComponentFieldProps {
+  value: unknown;
+  assets: AssetRecord[];
+  onChange: (next: unknown, immediate?: boolean) => void;
+}
+
+function ScriptComponentField({
+  value,
+  assets,
+  onChange,
+}: ScriptComponentFieldProps) {
+  const obj =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const enabled = typeof obj.enabled === "boolean" ? obj.enabled : true;
+  const scriptUuid = readAssetUuidValue(obj.script) || null;
+  const scriptPath = typeof obj.script_path === "string" ? obj.script_path : "";
+  const properties = { values: readScriptPropertiesMap(obj.properties) };
+  const resolvedAsset = scriptUuid
+    ? assets.find((a) => a.uuid === scriptUuid) ?? null
+    : null;
+  const isUnassigned = !scriptUuid && scriptPath.trim().length === 0;
+
+  function emit(patch: Record<string, unknown>, immediate = false) {
+    onChange(
+      {
+        ...obj,
+        script: scriptUuid,
+        script_path: scriptPath,
+        enabled,
+        properties,
+        ...patch,
+      },
+      immediate,
+    );
+  }
+
+  return (
+    <div className="script-component-editor">
+      <div className="prop-row">
+        <span className="prop-label">Enabled</span>
+        <label className="option-toggle">
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => emit({ enabled: e.target.checked }, true)}
+          />
+          <span className="muted">{enabled ? "Active" : "Disabled"}</span>
+        </label>
+      </div>
+
+      <AssetSlotField
+        label="Script Asset"
+        isOptional
+        value={scriptUuid}
+        assets={assets}
+        kindFilter="script"
+        onChange={(nextAsset, immediate) =>
+          emit({ script: nextAsset ? readAssetUuidValue(nextAsset) : null }, immediate)
+        }
+      />
+
+      <div className="prop-row">
+        <span className="prop-label" title="Fallback relative path under assets/ when no asset UUID is set">
+          Script Path
+        </span>
+        <div className="script-path-control prop-control">
+          <input
+            type="text"
+            className="text-input"
+            placeholder={
+              resolvedAsset
+                ? `${resolvedAsset.relative_path} (from asset)`
+                : "scripts/player_3d.rhai"
+            }
+            value={scriptPath}
+            onChange={(e) => emit({ script_path: e.target.value })}
+          />
+          {scriptPath !== "" && (
+            <button
+              type="button"
+              className="ghost-btn icon-mini"
+              title="Clear script path"
+              onClick={() => emit({ script_path: "" }, true)}
+            >
+              <X size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {isUnassigned && (
+        <div className="muted script-hint">
+          Select or drop a <code>.rhai</code> script asset above, or enter a relative path (e.g.{" "}
+          <code>scripts/player_3d.rhai</code>).
+        </div>
+      )}
+
+      <ScriptPropertiesField
+        value={properties}
+        onChange={(nextProps, immediate) => emit({ properties: nextProps }, immediate)}
+      />
+    </div>
+  );
+}
+
 export function SchemaField({
   label,
   typePath,
@@ -1016,6 +1495,20 @@ export function SchemaField({
         onChange={onChange}
       />
     );
+  }
+
+  // Dedicated Rhai ScriptComponent & ScriptProperties editors
+  if (typePath === "engine_scripting::component::ScriptComponent") {
+    return (
+      <ScriptComponentField
+        value={value}
+        assets={assets ?? []}
+        onChange={onChange}
+      />
+    );
+  }
+  if (typePath === "engine_scripting::component::ScriptProperties") {
+    return <ScriptPropertiesField value={value} onChange={onChange} />;
   }
 
   // 1. Name

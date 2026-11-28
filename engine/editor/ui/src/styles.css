@@ -1977,6 +1977,12 @@ button.ghost-btn:hover:not(:disabled) {
   background: rgba(61, 158, 245, 0.12);
 }
 
+.badge-script {
+  color: #f39ec0;
+  border-color: rgba(235, 122, 167, 0.42);
+  background: rgba(235, 122, 167, 0.14);
+}
+
 .audio-preview-bar,
 .model-details-bar {
   display: flex;
@@ -2392,4 +2398,164 @@ button.ghost-btn:hover:not(:disabled) {
   background: rgba(242, 169, 59, 0.13);
   border-bottom-color: rgba(242, 169, 59, 0.4);
   color: #ffe2ad;
+}
+
+/* Stage 6.2–6.4: Rhai Script Asset & ScriptComponent Inspector Editor */
+.cb-badge.cb-badge-script {
+  color: #f39ec0;
+  border-color: rgba(235, 122, 167, 0.5);
+  background: rgba(45, 18, 32, 0.9);
+}
+
+.script-details-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: rgba(235, 122, 167, 0.08);
+  border: 1px solid rgba(235, 122, 167, 0.28);
+}
+
+.script-details-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.script-component-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.script-path-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.script-path-control .text-input {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.script-hint {
+  font-size: 11px;
+  line-height: 1.4;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--border-subtle);
+}
+
+.script-props-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.script-props-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.script-props-empty {
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.script-props-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.script-prop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border-subtle);
+}
+
+.script-prop-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.script-prop-name {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.script-prop-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.script-prop-type {
+  padding: 2px 6px;
+  font-size: 11px;
+  min-width: 68px;
+}
+
+.script-prop-value {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.script-prop-value .num-input,
+.script-prop-text {
+  width: 100%;
+  min-width: 0;
+}
+
+.script-prop-add {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.script-prop-add-name {
+  flex: 1 1 120px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.script-prop-add-kind {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.script-prop-add button {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+
+.script-prop-error {
+  font-size: 11px;
+  color: #ffb8b8;
 }
